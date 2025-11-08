@@ -353,6 +353,54 @@ $uploadSelected?.addEventListener("click", async () => {
   }
 });
 
+
+/* ========= XML-Generierung ========= */
+
+$("#btn-generate-xml").addEventListener("click", async () => {
+  if (!selectedIds.size) {
+    setNotice("Bitte mindestens eine Stelle auswählen.", "warn");
+    return;
+  }
+
+  // hole die selektierten CMS-Daten aus deinem globalen Array cmsItems
+  const selectedItems = cmsItems.filter(it => selectedIds.has(it.id));
+
+  if (!selectedItems.length) {
+    setNotice("Keine passenden CMS-Daten gefunden.", "warn");
+    return;
+  }
+
+  // Generiere die XML
+  const xml = buildMultiJobXML(selectedItems);
+
+  // optional: als Datei speichern
+  const blob = new Blob([xml], { type: "application/xml" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Stellen_${new Date().toISOString().split("T")[0]}.xml`;
+  a.click();
+
+  setNotice(`XML-Datei mit ${selectedItems.length} Stellen wurde erzeugt.`, "ok");
+});
+
+
+/* ========= Mehrfach-XML-Builder ========= */
+function buildMultiJobXML(jobs) {
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+  xml += `<JobPositionPostings xmlns="http://xml.hr-xml.org/2007-04-15">\n`;
+
+  for (const data of jobs) {
+    xml += buildBAJobXML(data).replace(/^<\?xml[^>]+>\n?/, ""); // ohne Header einfügen
+  }
+
+  xml += `</JobPositionPostings>`;
+  return xml;
+}
+
+
+
+
 // beim Laden initial ausführen
 loadList();
 
