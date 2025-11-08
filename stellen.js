@@ -342,24 +342,22 @@ $uploadSelected?.addEventListener("click", async () => {
 
 /* ========= XML-Generierung ========= */
 
-$("#btn-generate-xml").addEventListener("click", async () => {
+$("#btn-generate-xml")?.addEventListener("click", async () => {
   if (!selectedIds.size) {
     setNotice("Bitte mindestens eine Stelle auswählen.", "warn");
     return;
   }
 
-  // hole die selektierten CMS-Daten aus deinem globalen Array cmsItems
   const selectedItems = cmsItems.filter(it => selectedIds.has(it.id));
-
   if (!selectedItems.length) {
     setNotice("Keine passenden CMS-Daten gefunden.", "warn");
     return;
   }
 
-  // Generiere die XML
+  // XML erzeugen
   const xml = buildMultiJobXML(selectedItems);
 
-  // optional: als Datei speichern
+  // Download anbieten
   const blob = new Blob([xml], { type: "application/xml" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -370,19 +368,68 @@ $("#btn-generate-xml").addEventListener("click", async () => {
   setNotice(`XML-Datei mit ${selectedItems.length} Stellen wurde erzeugt.`, "ok");
 });
 
-
 /* ========= Mehrfach-XML-Builder ========= */
 function buildMultiJobXML(jobs) {
   let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-  xml += `<JobPositionPostings xmlns="http://xml.hr-xml.org/2007-04-15">\n`;
+  xml += `<JobOfferPostings xmlns="http://xml.hr-xml.org/2007-04-15">\n`;
 
-  for (const data of jobs) {
-    xml += buildBAJobXML(data).replace(/^<\?xml[^>]+>\n?/, ""); // ohne Header einfügen
+  for (const job of jobs) {
+    xml += buildBAJobXML(job).replace(/^<\?xml[^>]+>\n?/, "");
   }
 
-  xml += `</JobPositionPostings>`;
+  xml += `</JobOfferPostings>`;
   return xml;
 }
+
+/* ========= Einzel-Job-XML ========= */
+function buildBAJobXML(data) {
+  let xml = `  <JobPositionPosting>\n`;
+  xml += `    <PositionDetail>\n`;
+  xml += `      <PositionTitle>${escapeXML(data.job_title)}</PositionTitle>\n`;
+  xml += `      <JobCategory code="${data.ba_title_code || ""}">${escapeXML(data.ba_title_label || "")}</JobCategory>\n`;
+  xml += `      <Description>${escapeXML(data.description_rich || "")}</Description>\n`;
+  xml += `      <EmploymentType>${escapeXML(data.employment_type || "")}</EmploymentType>\n`;
+  if (data.working_hours)
+    xml += `      <WorkingHours>${data.working_hours}</WorkingHours>\n`;
+  if (data.valid_from)
+    xml += `      <PostingStartDate>${data.valid_from}</PostingStartDate>\n`;
+  if (data.valid_to)
+    xml += `      <PostingEndDate>${data.valid_to}</PostingEndDate>\n`;
+  xml += `    </PositionDetail>\n`;
+
+  xml += `    <Company>\n`;
+  xml += `      <Name>${escapeXML(data.company_name || "")}</Name>\n`;
+  xml += `      <SupplierID>${escapeXML(data.supplier_id || "")}</SupplierID>\n`;
+  xml += `    </Company>\n`;
+
+  xml += `    <Location>\n`;
+  xml += `      <City>${escapeXML(data.location_city || "")}</City>\n`;
+  xml += `      <PostalCode>${escapeXML(data.location_postcode || "")}</PostalCode>\n`;
+  xml += `      <Country>${escapeXML(data.location_country || "")}</Country>\n`;
+  xml += `    </Location>\n`;
+
+  xml += `    <Contact>\n`;
+  xml += `      <Name>${escapeXML(data.contact_name || "")}</Name>\n`;
+  if (data.application_email)
+    xml += `      <Email>${escapeXML(data.application_email)}</Email>\n`;
+  if (data.application_url)
+    xml += `      <Url>${escapeXML(data.application_url)}</Url>\n`;
+  xml += `    </Contact>\n`;
+
+  xml += `  </JobPositionPosting>\n`;
+  return xml;
+}
+
+/* ========= XML-Escape Helper ========= */
+function escapeXML(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 
 
 
