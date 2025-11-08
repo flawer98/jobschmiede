@@ -13,63 +13,11 @@ const JSON_URL = "https://raw.githubusercontent.com/flawer98/jobschmiede/main/ba
 const $  = sel => document.querySelector(sel);
 const $$ = sel => Array.from(document.querySelectorAll(sel));
 
-let cmsItems = [];
-const selectionState = { ids: new Set() };
-
-function getSelectionSet() {
-  if (!(selectionState.ids instanceof Set)) {
-    selectionState.ids = new Set();
-  }
-  return selectionState.ids;
-}
-
 function logError(context, error) {
   console.error(`[${context}]`, error);
 }
 
 const normalizeId = value => String(value ?? "");
-
-const normalizeComparable = value => String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-
-function findCmsItemMatchByName(data) {
-  if (!cmsItems.length || !data) return null;
-  const externalId = normalizeId(data.external_id);
-  if (externalId) {
-    const byId = cmsItems.find(item => normalizeId(item.id) === externalId);
-    if (byId) return byId;
-  }
-  const title = normalizeComparable(data.job_title);
-  if (!title) return null;
-  const supplier = normalizeComparable(data.supplier_id);
-  return cmsItems.find(item => {
-    if (!item) return false;
-    const sameTitle = normalizeComparable(item.job_title) === title;
-    if (!sameTitle) return false;
-    if (supplier) {
-      const itemSupplier = normalizeComparable(item.supplier_id);
-      if (itemSupplier && itemSupplier !== supplier) return false;
-    }
-    const city = normalizeComparable(data.location_city);
-    if (city) {
-      const itemCity = normalizeComparable(item.location_city);
-      if (itemCity && itemCity !== city) return false;
-    }
-    return true;
-  }) || null;
-}
-
-function applyExistingExternalId(data) {
-  if (!data) return data;
-  const existing = findCmsItemMatchByName(data);
-  if (!existing) return data;
-  const existingId = normalizeId(existing.id);
-  if (!existingId) return data;
-  if (normalizeId(data.external_id) === existingId) return data;
-  const hidden = $("#external_id");
-  if (hidden) hidden.value = existingId;
-  data.external_id = existingId;
-  return data;
-}
 
 function extractItemId(response) {
   if (!response) return null;
@@ -159,7 +107,7 @@ function toggleDisabled(disabled) {
     }else{
       if(gen.dataset.locked){
         delete gen.dataset.locked;
-        gen.disabled=getSelectionSet().size===0;
+        gen.disabled=selectedIds.size===0;
       }
     }
   }
@@ -332,7 +280,7 @@ function renderCmsTable(items){
   const selection=getSelectionSet();
   $cmsBody.innerHTML=items.map(it=>`
     <tr>
-      <td><input type="checkbox" class="row-check" data-id="${escapeHTML(it.id)}" ${selection.has(normalizeId(it.id))?"checked":""} ${it.ba_status==="OK"?"disabled":""}></td>
+      <td><input type="checkbox" class="row-check" data-id="${escapeHTML(it.id)}" ${selectedIds.has(normalizeId(it.id))?"checked":""} ${it.ba_status==="OK"?"disabled":""}></td>
       <td>${escapeXML(it.job_title||"-")}</td>
       <td>${escapeXML(it.location_city||"-")}</td>
       <td><small>${it.updated_on?new Date(it.updated_on).toLocaleDateString("de-DE")+" "+new Date(it.updated_on).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}):"-"}</small></td>
@@ -344,8 +292,7 @@ function renderCmsTable(items){
   $cmsBody.querySelectorAll(".row-check").forEach(cb=>{
     cb.addEventListener("change",e=>{
       const id=normalizeId(e.target.dataset.id);
-      const selection=getSelectionSet();
-      e.target.checked?selection.add(id):selection.delete(id);
+      e.target.checked?selectedIds.add(id):selectedIds.delete(id);
       updateSelectionButtons();
     });
   });
@@ -368,7 +315,7 @@ function updateSelectionButtons(){
   if($generateXml && !$generateXml.dataset.locked) $generateXml.disabled=n===0;
   if($uploadSelected) $uploadSelected.textContent=`Ausgewählte übertragen (${n})`;
   if($deleteSelected) $deleteSelected.textContent=`In BA löschen (${n})`;
-  if($selectAll) $selectAll.checked=cmsItems.length&&cmsItems.every(it=>selection.has(normalizeId(it.id)));
+  if($selectAll) $selectAll.checked=cmsItems.length&&cmsItems.every(it=>selectedIds.has(normalizeId(it.id)));
 }
 async function loadList(){
   setNotice("Lade CMS-Einträge …");
@@ -379,10 +326,7 @@ async function loadList(){
     if(!data||!Array.isArray(data.items)) throw new Error("Ungültige Antwort vom Server");
     cmsItems=data.items||[];
     const validIds=new Set(cmsItems.map(it=>normalizeId(it.id)));
-    const currentSelection=getSelectionSet();
-    const filtered=new Set();
-    currentSelection.forEach(id=>{if(validIds.has(id)) filtered.add(id);});
-    selectionState.ids=filtered;
+    selectedIds=new Set(Array.from(selectedIds).filter(id=>validIds.has(id)));
     renderCmsTable(cmsItems);
     updateSelectionButtons();
     setNotice(`Es wurden ${cmsItems.length} Einträge geladen.`,"ok");
@@ -443,9 +387,8 @@ function buildBAJobXML(data){
 
 /* ========= XML Datei generieren ========= */
 $("#btn-generate-xml")?.addEventListener("click",async()=>{
-  const selection=getSelectionSet();
-  if(!selection.size){setNotice("Bitte mindestens eine Stelle auswählen.","warn");return;}
-  const sel=cmsItems.filter(it=>selection.has(normalizeId(it.id)));
+  if(!selectedIds.size){setNotice("Bitte mindestens eine Stelle auswählen.","warn");return;}
+  const sel=cmsItems.filter(it=>selectedIds.has(normalizeId(it.id)));
   if(!sel.length){setNotice("Keine passenden Daten.","warn");return;}
   const xml=buildMultiJobXML(sel,"INSERT");
   const filename=buildBAFilename(sel[0]?.supplier_id);
@@ -480,22 +423,19 @@ async function sendToMake(typeOfLoad,jobs){
 
 /* ========= Button Aktionen ========= */
 $uploadSelected?.addEventListener("click",async()=>{
-  const selection=getSelectionSet();
-  const sel=cmsItems.filter(it=>selection.has(normalizeId(it.id))&&it.ba_status!=="OK");
+  const sel=cmsItems.filter(it=>selectedIds.has(normalizeId(it.id))&&it.ba_status!=="OK");
   if(!sel.length){setNotice("Alle ausgewählten Stellen wurden bereits gesendet.","warn");return;}
   await sendToMake("INSERT",sel);
 });
 $deleteSelected?.addEventListener("click",async()=>{
-  const selection=getSelectionSet();
-  const sel=cmsItems.filter(it=>selection.has(normalizeId(it.id)));
+  const sel=cmsItems.filter(it=>selectedIds.has(normalizeId(it.id)));
   if(!sel.length){setNotice("Keine Auswahl.","warn");return;}
   await sendToMake("DELETE",sel);
 });
 $clearSelection?.addEventListener("click",()=>{getSelectionSet().clear();renderCmsTable(cmsItems);updateSelectionButtons();});
 $selectAll?.addEventListener("change",e=>{
-  const selection=getSelectionSet();
-  if(e.target.checked) cmsItems.forEach(it=>{if(it.ba_status!=="OK")selection.add(normalizeId(it.id));});
-  else selection.clear();
+  if(e.target.checked) cmsItems.forEach(it=>{if(it.ba_status!=="OK")selectedIds.add(normalizeId(it.id));});
+  else selectedIds.clear();
   renderCmsTable(cmsItems);updateSelectionButtons();
 });
 $refresh?.addEventListener("click",loadList);
