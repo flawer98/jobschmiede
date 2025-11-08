@@ -1,0 +1,243 @@
+<div class="ba-admin">
+  <div class="ba-header">
+    <h1>Stellenanzeigen – Admin</h1>
+    <p class="ba-sub">Anlegen, bearbeiten & an die BA übertragen</p>
+  </div>
+
+  <!-- Notice/Status -->
+  <div id="notice" class="ba-notice">Bereit.</div>
+
+  <!-- Formular -->
+  <form id="job-form" class="ba-card" novalidate>
+    <!-- BASIS -->
+    <fieldset class="ba-section">
+      <legend>Basisdaten</legend>
+      <div class="ba-grid">
+        <div class="ba-field">
+          <label class="ba-label" for="job_title">Stellentitel *</label>
+          <input id="job_title" name="job_title" class="ba-input" required placeholder="z. B. Webentwickler/in" />
+        </div>
+
+        <div class="ba-field">
+          <label class="ba-label" for="employment_type">Beschäftigungsart *</label>
+          <select id="employment_type" name="employment_type" class="ba-select" required>
+            <option value="">Bitte wählen</option>
+            <option value="Vollzeit">Vollzeit</option>
+            <option value="Teilzeit">Teilzeit</option>
+            <option value="Befristet">Befristet</option>
+            <option value="Minijob">Minijob</option>
+            <option value="Praktikum">Praktikum</option>
+            <option value="Ausbildung">Ausbildung</option>
+          </select>
+        </div>
+
+        <div class="ba-field">
+          <label class="ba-label" for="working_hours">Wochenstunden</label>
+          <input id="working_hours" name="working_hours" class="ba-input" type="number" min="1" step="1" placeholder="z. B. 40" />
+        </div>
+
+        <div class="ba-field">
+          <label class="ba-label" for="valid_from">Veröffentlichen ab *</label>
+          <input id="valid_from" name="valid_from" class="ba-input" type="date" required />
+        </div>
+
+        <div class="ba-field">
+          <label class="ba-label" for="valid_to">Veröffentlichen bis *</label>
+          <input id="valid_to" name="valid_to" class="ba-input" type="date" required />
+        </div>
+      </div>
+
+      <div class="ba-field" style="margin-top:var(--ba-gap)">
+        <label class="ba-label" for="description_rich">Beschreibung *</label>
+        <textarea id="description_rich" name="description_rich" class="ba-textarea" required placeholder="Aufgaben, Profil, Benefits …"></textarea>
+      </div>
+    </fieldset>
+
+    <!-- ORT -->
+    <fieldset class="ba-section">
+      <legend>Arbeitsort</legend>
+      <div class="ba-grid">
+        <div class="ba-field">
+          <label class="ba-label" for="location_street">Straße & Nr.</label>
+          <input id="location_street" name="location_street" class="ba-input" />
+        </div>
+        <div class="ba-field">
+          <label class="ba-label" for="location_postcode">PLZ *</label>
+          <input id="location_postcode" name="location_postcode" class="ba-input" required inputmode="numeric" maxlength="10" />
+        </div>
+        <div class="ba-field">
+          <label class="ba-label" for="location_city">Ort *</label>
+          <input id="location_city" name="location_city" class="ba-input" required />
+        </div>
+        <div class="ba-field">
+          <label class="ba-label" for="location_country">Land *</label>
+          <select id="location_country" name="location_country" class="ba-select" required>
+            <option value="DE" selected>Deutschland (DE)</option>
+            <option value="AT">Österreich (AT)</option>
+            <option value="CH">Schweiz (CH)</option>
+          </select>
+        </div>
+      </div>
+    </fieldset>
+
+    <!-- BEWERBUNG & KONTAKT -->
+    <fieldset class="ba-section">
+      <legend>Bewerbung & Kontakt</legend>
+      <div class="ba-grid">
+        <div class="ba-field">
+          <label class="ba-label" for="application_email">Bewerbungs-E-Mail</label>
+          <input id="application_email" name="application_email" class="ba-input" type="email" placeholder="jobs@firma.de" />
+        </div>
+        <div class="ba-field">
+          <label class="ba-label" for="application_url">Bewerbungs-URL</label>
+          <input id="application_url" name="application_url" class="ba-input" type="url" placeholder="https://firma.de/karriere" />
+        </div>
+        <div class="ba-field">
+          <label class="ba-label" for="contact_name">Ansprechpartner/in *</label>
+          <input id="contact_name" name="contact_name" class="ba-input" required />
+        </div>
+        <div class="ba-field">
+          <label class="ba-label" for="contact_email">Kontakt-E-Mail</label>
+          <input id="contact_email" name="contact_email" class="ba-input" type="email" />
+        </div>
+        <div class="ba-field">
+          <label class="ba-label" for="contact_phone">Telefon</label>
+          <input id="contact_phone" name="contact_phone" class="ba-input" />
+        </div>
+      </div>
+      <p class="ba-hint">Mindestens <strong>E-Mail</strong> <em>oder</em> <strong>URL</strong> muss befüllt sein.</p>
+    </fieldset>
+
+    <!-- BERUF (BA) -->
+    <fieldset class="ba-section">
+      <legend>BA-Beruf</legend>
+
+      <div class="ba-field ba-autocomplete">
+        <label class="ba-label" for="ba-search">Beruf (Suche in BA-Liste)</label>
+        <input id="ba-search" class="ba-input" autocomplete="off" placeholder="z. B. Industriemechaniker/in" />
+        <ul id="suggestions" class="ba-suggestions hidden" role="listbox" aria-label="Vorschläge"></ul>
+      </div>
+
+      <div class="ba-grid" style="margin-top:var(--ba-gap)">
+        <div class="ba-field">
+          <label class="ba-label" for="ba_title_label">Berufsbezeichnung</label>
+          <input id="ba_title_label" name="ba_title_label" class="ba-input ba-input--readonly" type="text" readonly />
+        </div>
+        <div class="ba-field">
+          <label class="ba-label" for="ba_bkz">Codenummer (BKZ)</label>
+          <input id="ba_bkz" name="ba_bkz" class="ba-input ba-input--readonly" type="text" readonly />
+        </div>
+        <div class="ba-field">
+          <label class="ba-label" for="ba_title_code">TitleCode</label>
+          <input id="ba_title_code" name="ba_title_code" class="ba-input ba-input--readonly" type="text" readonly />
+        </div>
+      </div>
+
+      <p class="ba-hint">Die drei Felder werden durch die Suche gesetzt und sind nicht editierbar.</p>
+    </fieldset>
+
+    <!-- UNTERNEHMEN / SUPPLIER -->
+    <fieldset class="ba-section">
+      <legend>Unternehmen & Supplier</legend>
+      <div class="ba-grid">
+        <div class="ba-field">
+          <label class="ba-label" for="company_name">Unternehmensname *</label>
+          <input id="company_name" name="company_name" class="ba-input" required />
+        </div>
+        <div class="ba-field">
+          <label class="ba-label" for="company_website">Website</label>
+          <input id="company_website" name="company_website" class="ba-input" type="url" placeholder="https://…" />
+        </div>
+        <div class="ba-field">
+          <label class="ba-label" for="supplier_id">Partner-/Supplier-ID (10-stellig) *</label>
+          <input id="supplier_id" name="supplier_id" class="ba-input" value="v000000100" />
+        </div>
+      </div>
+
+      <!-- Dateinamen-Vorschau -->
+      <div class="ba-notice" id="filename_box">
+        <strong>Dateinamen-Vorschau:</strong> <code id="filename_preview">–</code>
+      </div>
+    </fieldset>
+
+    <!-- PROZESS -->
+    <fieldset class="ba-section">
+      <legend>Prozess</legend>
+      <div class="ba-row">
+        <label class="ba-toggle">
+          <input id="transfer_flag" name="transfer_flag" type="checkbox" />
+          <span>Für Übertragung an BA vormerken</span>
+        </label>
+      </div>
+
+      <!-- interne IDs -->
+      <input id="external_id" name="external_id" type="hidden" />
+    </fieldset>
+
+    <!-- Aktionen -->
+    <div class="ba-actions">
+      <button type="submit" class="ba-btn ba-btn--primary" id="save">Speichern</button>
+      <button type="button" class="ba-btn" id="upload-now">Jetzt an BA übertragen</button>
+      <div class="ba-spacer"></div>
+ 			
+
+    </div>
+  </form>
+  
+  <!-- ===== CMS-Übersicht & Auswahl-Upload ===== -->
+<div class="ba-card" style="margin-top:20px">
+  <div class="ba-row" style="justify-content:space-between; align-items:center;">
+    <div class="ba-row" style="gap:8px;">
+      <input id="list-search" class="ba-input" placeholder="Suche Titel/Ort …" style="min-width:260px">
+      <select id="list-filter-status" class="ba-select">
+        <option value="">Status: alle</option>
+        <option value="PENDING">PENDING</option>
+        <option value="OK">OK</option>
+        <option value="ERROR">ERROR</option>
+      </select>
+      <label class="ba-row" style="align-items:center; gap:6px;">
+        <input id="list-only-flag" type="checkbox">
+        <span>nur transfer_flag = true</span>
+      </label>
+    </div>
+    <div class="ba-row">
+      <button type="button" class="ba-btn" id="btn-refresh">Aktualisieren</button>
+    </div>
+  </div>
+
+  <div style="margin-top:10px; overflow:auto;">
+    <table class="ba-table" id="cms-table">
+      <thead>
+        <tr>
+          <th style="width:32px"><input type="checkbox" id="select-all"></th>
+          <th>Titel</th>
+          <th>Ort</th>
+          <th>Updated</th>
+          <th>Flag</th>
+          <th>BA-Status</th>
+          <th style="width:110px">Aktion</th>
+        </tr>
+      </thead>
+      <tbody id="cms-tbody">
+        <tr><td colspan="7">Noch keine Daten.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="ba-row" style="justify-content:space-between; margin-top:12px;">
+    <div class="ba-row" style="gap:8px;">
+      <button type="button" class="ba-btn ba-btn--primary" id="btn-upload-selected" disabled>
+        Ausgewählte direkt übertragen (0)
+      </button>
+      <button type="button" class="ba-btn ba-btn--ghost" id="btn-generate-xml" disabled>XML-Datei generieren</button>
+      <button type="button" class="ba-btn" id="btn-clear-selection" disabled>Auswahl leeren</button>
+    </div>
+    <div class="ba-row" style="gap:8px;">
+      <button type="button" class="ba-btn ba-btn--ghost" id="btn-load-more" disabled>Mehr laden …</button>
+    </div>
+  </div>
+</div>
+  
+  
+  
+</div>
