@@ -13,11 +13,86 @@ const JSON_URL = "https://raw.githubusercontent.com/flawer98/jobschmiede/main/ba
 const $  = sel => document.querySelector(sel);
 const $$ = sel => Array.from(document.querySelectorAll(sel));
 
+let cmsItems = [];
+let cmsIdIndex = new Map();
+let cmsNameIndex = new Map();
+let listLoadingPromise = null;
+const selectionState = { ids: new Set() };
+
+function getSelectionSet() {
+  if (!(selectionState.ids instanceof Set)) {
+    selectionState.ids = new Set();
+  }
+  return selectionState.ids;
+}
+
 function logError(context, error) {
   console.error(`[${context}]`, error);
 }
 
 const normalizeId = value => String(value ?? "");
+
+const normalizeComparable = value => String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+
+function buildCmsKey(item) {
+  if (!item) return "";
+  const title = normalizeComparable(item.job_title);
+  if (!title) return "";
+  const supplier = normalizeComparable(item.supplier_id);
+  const city = normalizeComparable(item.location_city);
+  return `${title}|${supplier}|${city}`;
+}
+
+function rebuildCmsIndexes(items = cmsItems) {
+  cmsIdIndex = new Map();
+  cmsNameIndex = new Map();
+  for (const item of items) {
+    const normalizedId = normalizeId(item?.id);
+    if (normalizedId) {
+      cmsIdIndex.set(normalizedId, item);
+    }
+    const key = buildCmsKey(item);
+    if (key) {
+      cmsNameIndex.set(key, item);
+    }
+  }
+}
+
+function registerCmsItem(item) {
+  if (!item) return;
+  const normalizedId = normalizeId(item.id);
+  if (normalizedId) {
+    cmsIdIndex.set(normalizedId, item);
+  }
+  const key = buildCmsKey(item);
+  if (key) {
+    cmsNameIndex.set(key, item);
+  }
+}
+
+function findCmsItemMatchByName(data) {
+  if (!data) return null;
+  const externalId = normalizeId(data.external_id);
+  if (externalId && cmsIdIndex.has(externalId)) {
+    return cmsIdIndex.get(externalId);
+  }
+  const key = buildCmsKey(data);
+  if (!key) return null;
+  return cmsNameIndex.get(key) ?? null;
+}
+
+function applyExistingExternalId(data) {
+  if (!data) return data;
+  const existing = findCmsItemMatchByName(data);
+  if (!existing) return data;
+  const existingId = normalizeId(existing.id);
+  if (!existingId) return data;
+  if (normalizeId(data.external_id) === existingId) return data;
+  const hidden = $("#external_id");
+  if (hidden) hidden.value = existingId;
+  data.external_id = existingId;
+  return data;
+}
 
 function extractItemId(response) {
   if (!response) return null;
@@ -107,7 +182,7 @@ function toggleDisabled(disabled) {
     }else{
       if(gen.dataset.locked){
         delete gen.dataset.locked;
-        gen.disabled=selectedIds.size===0;
+        gen.disabled=getSelectionSet().size===0;
       }
     }
   }
@@ -180,8 +255,8 @@ function searchJobs(q){
 }
 function renderSuggestions(res){
   if(!res.length){$list.innerHTML="";$list.classList.add("hidden");return;}
-  $list.innerHTML=res.map(r=>`
-    <li class="ba-suggestion" data-code="${escapeHTML(r.title_code)}" data-label="${escapeHTML(r.neutral_kurz)}" data-bkz="${escapeHTML(r.bkz)}">
+  $list.innerHTML=res.map(r=>
+    `<li class="ba-suggestion" data-code="${escapeHTML(r.title_code)}" data-label="${escapeHTML(r.neutral_kurz)}" data-bkz="${escapeHTML(r.bkz)}">
       <span>${escapeHTML(r.neutral_kurz)}</span><small>${escapeHTML(r.bkz)}</small>
     </li>`).join('');
   $list.classList.remove("hidden");
@@ -229,6 +304,7 @@ let isSaving=false;
 $("#job-form")?.addEventListener("submit",async e=>{
   e.preventDefault();
   if(isSaving) return;
+  await ensureCmsListLoaded();
   const data=serializeForm(e.currentTarget);
   applyExistingExternalId(data);
   const v=validate(data);
@@ -239,11 +315,21 @@ $("#job-form")?.addEventListener("submit",async e=>{
     const resp=await postHook(WH_SAVE,{item:data});
     setNotice(resp||"Gespeichert","ok");
     const newId=extractItemId(resp);
-    if(newId) $("#external_id").value=newId;
+    if(newId) {
+      $("#external_id").value=newId;
+      data.external_id=newId;
+      data.id=newId;
+    }
+    await loadList({silent:true,preserveNotice:true});
+    if(newId){
+      const refreshed=cmsIdIndex.get(newId)??data;
+      registerCmsItem(refreshed);
+    }
   }catch(error){setNotice(extractErrorMessage(error,"Fehler beim Speichern."),"error");}
   finally{isSaving=false;toggleDisabled(false);updateFilenamePreview();}
 });
 $("#upload-now")?.addEventListener("click",async()=>{
+  await ensureCmsListLoaded();
   const data=serializeForm($("#job-form"));
   applyExistingExternalId(data);
   const v=validate(data);
@@ -274,13 +360,23 @@ const $clearSelection=$("#btn-clear-selection");
 const $refresh=$("#btn-refresh");
 const $generateXml=$("#btn-generate-xml");
 
+async function ensureCmsListLoaded(){
+  if(cmsItems.length){return;}
+  if(listLoadingPromise){
+    try{await listLoadingPromise;}catch(error){logError("ensureCmsListLoaded",error);}
+    return;
+  }
+  try{await loadList({silent:true,preserveNotice:true});}
+  catch(error){logError("ensureCmsListLoaded",error);}
+}
+
 function renderCmsTable(items){
   if(!$cmsBody) return;
   if(!items?.length){$cmsBody.innerHTML="<tr><td colspan='7'>Keine Einträge gefunden.</td></tr>";return;}
   const selection=getSelectionSet();
-  $cmsBody.innerHTML=items.map(it=>`
-    <tr>
-      <td><input type="checkbox" class="row-check" data-id="${escapeHTML(it.id)}" ${selectedIds.has(normalizeId(it.id))?"checked":""} ${it.ba_status==="OK"?"disabled":""}></td>
+  $cmsBody.innerHTML=items.map(it=>
+    `<tr>
+      <td><input type="checkbox" class="row-check" data-id="${escapeHTML(it.id)}" ${selection.has(normalizeId(it.id))?"checked":""} ${it.ba_status==="OK"?"disabled":""}></td>
       <td>${escapeXML(it.job_title||"-")}</td>
       <td>${escapeXML(it.location_city||"-")}</td>
       <td><small>${it.updated_on?new Date(it.updated_on).toLocaleDateString("de-DE")+" "+new Date(it.updated_on).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}):"-"}</small></td>
@@ -292,7 +388,8 @@ function renderCmsTable(items){
   $cmsBody.querySelectorAll(".row-check").forEach(cb=>{
     cb.addEventListener("change",e=>{
       const id=normalizeId(e.target.dataset.id);
-      e.target.checked?selectedIds.add(id):selectedIds.delete(id);
+      const selection=getSelectionSet();
+      e.target.checked?selection.add(id):selection.delete(id);
       updateSelectionButtons();
     });
   });
@@ -315,28 +412,54 @@ function updateSelectionButtons(){
   if($generateXml && !$generateXml.dataset.locked) $generateXml.disabled=n===0;
   if($uploadSelected) $uploadSelected.textContent=`Ausgewählte übertragen (${n})`;
   if($deleteSelected) $deleteSelected.textContent=`In BA löschen (${n})`;
-  if($selectAll) $selectAll.checked=cmsItems.length&&cmsItems.every(it=>selectedIds.has(normalizeId(it.id)));
+  if($selectAll) $selectAll.checked=cmsItems.length&&cmsItems.every(it=>selection.has(normalizeId(it.id)));
 }
-async function loadList(){
-  setNotice("Lade CMS-Einträge …");
-  try{
-    const res=await fetch(WH_LIST,{method:"POST"});
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data=await res.json();
-    if(!data||!Array.isArray(data.items)) throw new Error("Ungültige Antwort vom Server");
-    cmsItems=data.items||[];
-    const validIds=new Set(cmsItems.map(it=>normalizeId(it.id)));
-    selectedIds=new Set(Array.from(selectedIds).filter(id=>validIds.has(id)));
-    renderCmsTable(cmsItems);
-    updateSelectionButtons();
-    setNotice(`Es wurden ${cmsItems.length} Einträge geladen.`,"ok");
-  }catch(error){
-    logError("loadList", error);
-    cmsItems=[];
-    renderCmsTable(cmsItems);
-    updateSelectionButtons();
-    setNotice(extractErrorMessage(error,"Fehler beim Laden der Liste."),"error");
+async function loadList(options={}){
+  if(typeof Event!=="undefined" && options instanceof Event){
+    options={};
   }
+  const {silent=false,preserveNotice=false}=options;
+  if(listLoadingPromise){
+    return listLoadingPromise;
+  }
+  const run=(async()=>{
+    if(!silent && !preserveNotice){
+      setNotice("Lade CMS-Einträge …");
+    }
+    try{
+      const res=await fetch(WH_LIST,{method:"POST"});
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data=await res.json();
+      if(!data||!Array.isArray(data.items)) throw new Error("Ungültige Antwort vom Server");
+      cmsItems=data.items||[];
+      rebuildCmsIndexes();
+      const validIds=new Set(cmsItems.map(it=>normalizeId(it.id)));
+      const currentSelection=getSelectionSet();
+      const filtered=new Set();
+      currentSelection.forEach(id=>{if(validIds.has(id)) filtered.add(id);});
+      selectionState.ids=filtered;
+      renderCmsTable(cmsItems);
+      updateSelectionButtons();
+      if(!silent && !preserveNotice){
+        setNotice(`Es wurden ${cmsItems.length} Einträge geladen.`,"ok");
+      }
+    }catch(error){
+      logError("loadList", error);
+      cmsItems=[];
+      rebuildCmsIndexes();
+      renderCmsTable(cmsItems);
+      updateSelectionButtons();
+      setNotice(extractErrorMessage(error,"Fehler beim Laden der Liste."),"error");
+      throw error;
+    }
+  })();
+  listLoadingPromise=run;
+  try{
+    await run;
+  }finally{
+    listLoadingPromise=null;
+  }
+  return run;
 }
 
 /* ========= XML Builder ========= */
@@ -387,8 +510,9 @@ function buildBAJobXML(data){
 
 /* ========= XML Datei generieren ========= */
 $("#btn-generate-xml")?.addEventListener("click",async()=>{
-  if(!selectedIds.size){setNotice("Bitte mindestens eine Stelle auswählen.","warn");return;}
-  const sel=cmsItems.filter(it=>selectedIds.has(normalizeId(it.id)));
+  const selection=getSelectionSet();
+  if(!selection.size){setNotice("Bitte mindestens eine Stelle auswählen.","warn");return;}
+  const sel=cmsItems.filter(it=>selection.has(normalizeId(it.id)));
   if(!sel.length){setNotice("Keine passenden Daten.","warn");return;}
   const xml=buildMultiJobXML(sel,"INSERT");
   const filename=buildBAFilename(sel[0]?.supplier_id);
@@ -423,19 +547,22 @@ async function sendToMake(typeOfLoad,jobs){
 
 /* ========= Button Aktionen ========= */
 $uploadSelected?.addEventListener("click",async()=>{
-  const sel=cmsItems.filter(it=>selectedIds.has(normalizeId(it.id))&&it.ba_status!=="OK");
+  const selection=getSelectionSet();
+  const sel=cmsItems.filter(it=>selection.has(normalizeId(it.id))&&it.ba_status!=="OK");
   if(!sel.length){setNotice("Alle ausgewählten Stellen wurden bereits gesendet.","warn");return;}
   await sendToMake("INSERT",sel);
 });
 $deleteSelected?.addEventListener("click",async()=>{
-  const sel=cmsItems.filter(it=>selectedIds.has(normalizeId(it.id)));
+  const selection=getSelectionSet();
+  const sel=cmsItems.filter(it=>selection.has(normalizeId(it.id)));
   if(!sel.length){setNotice("Keine Auswahl.","warn");return;}
   await sendToMake("DELETE",sel);
 });
 $clearSelection?.addEventListener("click",()=>{getSelectionSet().clear();renderCmsTable(cmsItems);updateSelectionButtons();});
 $selectAll?.addEventListener("change",e=>{
-  if(e.target.checked) cmsItems.forEach(it=>{if(it.ba_status!=="OK")selectedIds.add(normalizeId(it.id));});
-  else selectedIds.clear();
+  const selection=getSelectionSet();
+  if(e.target.checked) cmsItems.forEach(it=>{if(it.ba_status!=="OK")selection.add(normalizeId(it.id));});
+  else selection.clear();
   renderCmsTable(cmsItems);updateSelectionButtons();
 });
 $refresh?.addEventListener("click",loadList);
