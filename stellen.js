@@ -1,4 +1,3 @@
-<script>
 /* ========= Konfiguration ========= */
 const WH_SAVE            = "https://hook.eu2.make.com/krje3ftzgbomitzs8ca8a5f5mc5c5bhf";
 const WH_UPLOAD          = "https://hook.integromat.com/yyyyy";
@@ -364,4 +363,3 @@ loadList();
 document.addEventListener('keydown', e => {
   if (e.key === "Escape") $list.classList.add('hidden');
 });
-</script>
