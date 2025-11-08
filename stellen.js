@@ -566,6 +566,34 @@ $selectAll?.addEventListener("change", e => {
 
 $refresh?.addEventListener("click", loadList);
 
+
+function resolvePartnerIdFromJobsOrForm(jobs) {
+  const valid = id => /^[VPK]\d{9}$/i.test(id);
+  const norm  = v => padPartnerId10(String(v || "").trim());
+
+  // Wenn genau ein Job ausgewählt ist → direkt dessen ID nehmen
+  if (Array.isArray(jobs) && jobs.length === 1) {
+    const id = norm(jobs[0]?.supplier_id);
+    if (valid(id)) return id;
+  }
+
+  // Wenn mehrere Jobs ausgewählt → prüfen, ob alle dieselbe gültige ID haben
+  if (Array.isArray(jobs) && jobs.length > 1) {
+    const jobIds = jobs.map(j => norm(j?.supplier_id)).filter(valid);
+    const uniqueIds = [...new Set(jobIds)];
+    if (uniqueIds.length === 1) return uniqueIds[0]; // alle gleich → ok
+  }
+
+  // Fallback: Formularfeld (#supplier_id)
+  const formId = norm($("#supplier_id")?.value || "");
+  if (valid(formId)) return formId;
+
+  // Nichts brauchbares gefunden
+  return "";
+}
+
+
+
 /* ========= XML Datei generieren ========= */
 $("#btn-generate-xml")?.addEventListener("click", async () => {
   const selection = getSelectionSet();
