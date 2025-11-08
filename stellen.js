@@ -13,24 +13,85 @@ const JSON_URL = "https://raw.githubusercontent.com/flawer98/jobschmiede/main/ba
 const $  = sel => document.querySelector(sel);
 const $$ = sel => Array.from(document.querySelectorAll(sel));
 
+function logError(context, error) {
+  console.error(`[${context}]`, error);
+}
+
+const normalizeId = value => String(value ?? "");
+
+function extractItemId(response) {
+  if (!response) return null;
+  if (typeof response === "string") {
+    try { return extractItemId(JSON.parse(response)); } catch {}
+    const match = response.match(/(?:item[_-]?id|external[_-]?id|id)["']?[:=]\s*"?([\w-]{6,})"?/i);
+    return match ? match[1] : null;
+  }
+  if (typeof response === "object") {
+    if (response.itemId) return String(response.itemId);
+    if (response.item_id) return String(response.item_id);
+    if (response.external_id) return String(response.external_id);
+    if (response.id) return String(response.id);
+    if (Array.isArray(response.items)) {
+      for (const item of response.items) {
+        const nested = extractItemId(item);
+        if (nested) return nested;
+      }
+    }
+    if (response.item) {
+      const nested = extractItemId(response.item);
+      if (nested) return nested;
+    }
+    if (response.data) {
+      const nested = extractItemId(response.data);
+      if (nested) return nested;
+    }
+    if (typeof response.raw === "string") return extractItemId(response.raw);
+  }
+  return null;
+}
+
 function setNotice(text, type = "info") {
   const box = $("#notice");
   if (!box) return;
-  box.textContent = typeof text === "string" ? text : JSON.stringify(text, null, 2);
+  box.textContent = typeof text === "string" ? text : text != null ? JSON.stringify(text, null, 2) : "";
   box.classList.remove("ba-notice--ok","ba-notice--warn","ba-notice--error");
   if (type === "ok") box.classList.add("ba-notice--ok");
   if (type === "warn") box.classList.add("ba-notice--warn");
   if (type === "error") box.classList.add("ba-notice--error");
 }
 
+function extractErrorMessage(error, fallback) {
+  if (!error) return fallback;
+  if (typeof error === "string") return error;
+  if (typeof error.message === "string" && error.message) return `${fallback} (${error.message})`;
+  if (error.status) {
+    const statusText = `HTTP ${error.status}`;
+    if (error.body) return `${fallback} (${statusText}: ${error.body})`;
+    return `${fallback} (${statusText})`;
+  }
+  return fallback;
+}
+
 async function postHook(url, payload) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const txt = await res.text();
-  try { return JSON.parse(txt); } catch { return { raw: txt }; }
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const txt = await res.text();
+    if (!res.ok) {
+      const error = new Error(`Request failed with status ${res.status}`);
+      error.status = res.status;
+      error.body = txt;
+      throw error;
+    }
+    if (!txt) return null;
+    try { return JSON.parse(txt); } catch { return { raw: txt }; }
+  } catch (error) {
+    logError("postHook", error);
+    throw error;
+  }
 }
 
 function toggleDisabled(disabled) {
@@ -40,16 +101,16 @@ function toggleDisabled(disabled) {
   });
 }
 
-function isValidEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+function isValidEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v||"")); }
 function requireEitherEmailOrUrl(data){
   const hasEmail=data.application_email&&isValidEmail(data.application_email);
-  const hasUrl=data.application_url&&/^https?:\/\//i.test(data.application_url);
+  const hasUrl=data.application_url&&/^https?:\/\//i.test(String(data.application_url||""));
   return hasEmail||hasUrl;
 }
 function padPartnerId10(v){
-  const raw=String(v||"").trim().toLowerCase();
-  const m7=raw.match(/^[vpk]\d{7}$/);
-  const m9=raw.match(/^[vpk]\d{9}$/);
+  const raw=String(v||"").trim().toUpperCase();
+  const m7=raw.match(/^[VPK]\d{7}$/);
+  const m9=raw.match(/^[VPK]\d{9}$/);
   if(m7) return raw+"00";
   if(m9) return raw;
   return raw;
@@ -60,13 +121,14 @@ function formatTimestampForBA(d=new Date()){
 }
 function buildBAFilename(partnerId){
   const pid=padPartnerId10(partnerId);
-  if(!/^[vpk]\d{9}$/.test(pid)) return "DSXXXXXXXXXX_0000-00-00_00-00-00.xml";
+  if(!/^[VPK]\d{9}$/.test(pid)) return "DSXXXXXXXXXX_0000-00-00_00-00-00.xml";
   const ts=formatTimestampForBA();
   return `DS${pid}_${ts}.xml`;
 }
 function escapeXML(str){
   return String(str??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");
 }
+const escapeHTML=escapeXML;
 function updateFilenamePreview(){
   const pid=$("#supplier_id")?.value||"";
   $("#filename_preview").textContent=buildBAFilename(pid);
@@ -86,8 +148,14 @@ async function loadJobs(){
   if(jobIndex.length) return;
   try{
     const res=await fetch(JSON_URL,{cache:"force-cache"});
-    jobIndex=await res.json();
-  }catch{ setNotice("Konnte BA-Jobliste nicht laden.","error"); }
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data=await res.json();
+    if(!Array.isArray(data)) throw new Error("Ungültiges JSON-Format");
+    jobIndex=data;
+  }catch(error){
+    logError("loadJobs", error);
+    setNotice(extractErrorMessage(error,"Konnte BA-Jobliste nicht laden."),"error");
+  }
 }
 function searchJobs(q){
   q=q.toLowerCase();
@@ -100,8 +168,8 @@ function searchJobs(q){
 function renderSuggestions(res){
   if(!res.length){$list.innerHTML="";$list.classList.add("hidden");return;}
   $list.innerHTML=res.map(r=>`
-    <li class="ba-suggestion" data-code="${r.title_code}" data-label="${r.neutral_kurz}" data-bkz="${r.bkz}">
-      <span>${r.neutral_kurz}</span><small>${r.bkz}</small>
+    <li class="ba-suggestion" data-code="${escapeHTML(r.title_code)}" data-label="${escapeHTML(r.neutral_kurz)}" data-bkz="${escapeHTML(r.bkz)}">
+      <span>${escapeHTML(r.neutral_kurz)}</span><small>${escapeHTML(r.bkz)}</small>
     </li>`).join('');
   $list.classList.remove("hidden");
 }
@@ -125,6 +193,9 @@ $list?.addEventListener("click",e=>{
 /* ========= Formular ========= */
 function serializeForm(form){
   const data=Object.fromEntries(new FormData(form).entries());
+  for(const key of Object.keys(data)){
+    if(typeof data[key]==="string") data[key]=data[key].trim();
+  }
   data.transfer_flag=$("#transfer_flag")?.checked||false;
   if(data.working_hours) data.working_hours=Number(data.working_hours);
   return data;
@@ -140,18 +211,23 @@ function validate(data){
 $("#supplier_id")?.addEventListener("input",updateFilenamePreview);
 updateFilenamePreview();
 
+let isSaving=false;
+
 $("#job-form")?.addEventListener("submit",async e=>{
   e.preventDefault();
+  if(isSaving) return;
   const data=serializeForm(e.currentTarget);
   const v=validate(data);
   if(!v.ok){setNotice(v.msg,"warn");return;}
   setNotice("Speichern …");toggleDisabled(true);
   try{
+    isSaving=true;
     const resp=await postHook(WH_SAVE,{item:data});
-    setNotice(resp,"ok");
-    if(resp?.itemId&&!$("#external_id").value) $("#external_id").value=resp.itemId;
-  }catch{setNotice("Fehler beim Speichern.","error");}
-  finally{toggleDisabled(false);updateFilenamePreview();}
+    setNotice(resp||"Gespeichert","ok");
+    const newId=extractItemId(resp);
+    if(newId) $("#external_id").value=newId;
+  }catch(error){setNotice(extractErrorMessage(error,"Fehler beim Speichern."),"error");}
+  finally{isSaving=false;toggleDisabled(false);updateFilenamePreview();}
 });
 $("#upload-now")?.addEventListener("click",async()=>{
   const data=serializeForm($("#job-form"));
@@ -161,8 +237,8 @@ $("#upload-now")?.addEventListener("click",async()=>{
   setNotice(`Übertrage an BA … ${filename}`);toggleDisabled(true);
   try{
     const resp=await postHook(WH_UPLOAD,{item:data,filename_hint:filename});
-    if(resp?.status==="OK"||resp?.ok===true) setNotice(resp,"ok"); else setNotice(resp,"error");
-  }catch{setNotice("Fehler beim Upload.","error");}
+    if(resp?.status==="OK"||resp?.ok===true) setNotice(resp,"ok"); else setNotice(resp||"Unbekannte Antwort","error");
+  }catch(error){setNotice(extractErrorMessage(error,"Fehler beim Upload."),"error");}
   finally{toggleDisabled(false);}
 });
 $("#batch-10")?.addEventListener("click",()=>batchUpload(10));
@@ -170,7 +246,7 @@ $("#batch-20")?.addEventListener("click",()=>batchUpload(20));
 async function batchUpload(n){
   setNotice(`Batch-Upload (${n}) gestartet …`);toggleDisabled(true);
   try{setNotice(await postHook(WH_UPLOAD_LAST,{limit:n}),"ok");}
-  catch{setNotice("Fehler beim Batch-Upload.","error");}
+  catch(error){setNotice(extractErrorMessage(error,"Fehler beim Batch-Upload."),"error");}
   finally{toggleDisabled(false);}
 }
 
@@ -188,26 +264,26 @@ function renderCmsTable(items){
   if(!items?.length){$cmsBody.innerHTML="<tr><td colspan='7'>Keine Einträge gefunden.</td></tr>";return;}
   $cmsBody.innerHTML=items.map(it=>`
     <tr>
-      <td><input type="checkbox" class="row-check" data-id="${it.id}" ${selectedIds.has(it.id)?"checked":""} ${it.ba_status==="OK"?"disabled":""}></td>
+      <td><input type="checkbox" class="row-check" data-id="${escapeHTML(it.id)}" ${selectedIds.has(normalizeId(it.id))?"checked":""} ${it.ba_status==="OK"?"disabled":""}></td>
       <td>${escapeXML(it.job_title||"-")}</td>
       <td>${escapeXML(it.location_city||"-")}</td>
       <td><small>${it.updated_on?new Date(it.updated_on).toLocaleDateString("de-DE")+" "+new Date(it.updated_on).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}):"-"}</small></td>
       <td>${it.transfer_flag?"<span class='ba-chip'>true</span>":"<span class='ba-chip'>false</span>"}</td>
       <td><span class="ba-chip ${it.ba_status==="OK"?"ba-chip--ok":it.ba_status==="ERROR"?"ba-chip--error":"ba-chip--wait"}">${escapeXML(it.ba_status||"-")}</span></td>
-      <td><button type="button" class="ba-btn ba-btn--ghost" data-id="${it.id}" ${it.ba_status==="OK"?"disabled":""}>Upload</button></td>
+      <td><button type="button" class="ba-btn ba-btn--ghost" data-id="${escapeHTML(it.id)}" ${it.ba_status==="OK"?"disabled":""}>Upload</button></td>
     </tr>`).join("");
 
   $cmsBody.querySelectorAll(".row-check").forEach(cb=>{
     cb.addEventListener("change",e=>{
-      const id=e.target.dataset.id;
+      const id=normalizeId(e.target.dataset.id);
       e.target.checked?selectedIds.add(id):selectedIds.delete(id);
       updateSelectionButtons();
     });
   });
   $cmsBody.querySelectorAll("button.ba-btn").forEach(btn=>{
     btn.addEventListener("click",async e=>{
-      const id=e.currentTarget.dataset.id;
-      const job=cmsItems.find(j=>j.id===id);
+      const id=normalizeId(e.currentTarget.dataset.id);
+      const job=cmsItems.find(j=>normalizeId(j.id)===id);
       if(!job) return;
       if(job.ba_status==="OK"){setNotice("Bereits gesendet – übersprungen","warn");return;}
       await sendToMake("INSERT",[job]);
@@ -221,18 +297,26 @@ function updateSelectionButtons(){
   if($clearSelection) $clearSelection.disabled=n===0;
   if($uploadSelected) $uploadSelected.textContent=`Ausgewählte übertragen (${n})`;
   if($deleteSelected) $deleteSelected.textContent=`In BA löschen (${n})`;
-  if($selectAll) $selectAll.checked=cmsItems.length&&cmsItems.every(it=>selectedIds.has(it.id));
+  if($selectAll) $selectAll.checked=cmsItems.length&&cmsItems.every(it=>selectedIds.has(normalizeId(it.id)));
 }
 async function loadList(){
   setNotice("Lade CMS-Einträge …");
   try{
     const res=await fetch(WH_LIST,{method:"POST"});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const data=await res.json();
+    if(!data||!Array.isArray(data.items)) throw new Error("Ungültige Antwort vom Server");
     cmsItems=data.items||[];
     renderCmsTable(cmsItems);
     updateSelectionButtons();
     setNotice(`Es wurden ${cmsItems.length} Einträge geladen.`,"ok");
-  }catch{setNotice("Fehler beim Laden der Liste.","error");}
+  }catch(error){
+    logError("loadList", error);
+    cmsItems=[];
+    renderCmsTable(cmsItems);
+    updateSelectionButtons();
+    setNotice(extractErrorMessage(error,"Fehler beim Laden der Liste."),"error");
+  }
 }
 
 /* ========= XML Builder ========= */
@@ -284,7 +368,7 @@ function buildBAJobXML(data){
 /* ========= XML Datei generieren ========= */
 $("#btn-generate-xml")?.addEventListener("click",async()=>{
   if(!selectedIds.size){setNotice("Bitte mindestens eine Stelle auswählen.","warn");return;}
-  const sel=cmsItems.filter(it=>selectedIds.has(it.id));
+  const sel=cmsItems.filter(it=>selectedIds.has(normalizeId(it.id)));
   if(!sel.length){setNotice("Keine passenden Daten.","warn");return;}
   const xml=buildMultiJobXML(sel,"INSERT");
   const filename=buildBAFilename(sel[0]?.supplier_id);
@@ -299,6 +383,7 @@ async function sendToMake(typeOfLoad,jobs){
   if(!jobs.length)return;
   const filename=buildBAFilename(jobs[0]?.supplier_id);
   const xml=buildMultiJobXML(jobs,typeOfLoad);
+  if(!xml){setNotice("Konnte XML nicht erzeugen.","error");return;}
   const hook=typeOfLoad==="DELETE"?WH_DELETE_SELECTED:WH_UPLOAD_SELECTED;
   setNotice(`${typeOfLoad==="DELETE"?"Lösche":"Übertrage"} ${jobs.length} Einträge …`);
   toggleDisabled(true);
@@ -311,25 +396,25 @@ async function sendToMake(typeOfLoad,jobs){
       xml_content:xml
     });
     if(resp?.status==="OK"||resp?.ok===true) setNotice(resp,"ok");
-    else setNotice(resp,"error");
-  }catch{setNotice("Fehler beim Senden an Make.","error");}
+    else setNotice(resp||"Unbekannte Antwort","error");
+  }catch(error){setNotice(extractErrorMessage(error,"Fehler beim Senden an Make."),"error");}
   finally{toggleDisabled(false);}
 }
 
 /* ========= Button Aktionen ========= */
 $uploadSelected?.addEventListener("click",async()=>{
-  const sel=cmsItems.filter(it=>selectedIds.has(it.id)&&it.ba_status!=="OK");
+  const sel=cmsItems.filter(it=>selectedIds.has(normalizeId(it.id))&&it.ba_status!=="OK");
   if(!sel.length){setNotice("Alle ausgewählten Stellen wurden bereits gesendet.","warn");return;}
   await sendToMake("INSERT",sel);
 });
 $deleteSelected?.addEventListener("click",async()=>{
-  const sel=cmsItems.filter(it=>selectedIds.has(it.id));
+  const sel=cmsItems.filter(it=>selectedIds.has(normalizeId(it.id)));
   if(!sel.length){setNotice("Keine Auswahl.","warn");return;}
   await sendToMake("DELETE",sel);
 });
 $clearSelection?.addEventListener("click",()=>{selectedIds.clear();renderCmsTable(cmsItems);updateSelectionButtons();});
 $selectAll?.addEventListener("change",e=>{
-  if(e.target.checked) cmsItems.forEach(it=>{if(it.ba_status!=="OK")selectedIds.add(it.id);});
+  if(e.target.checked) cmsItems.forEach(it=>{if(it.ba_status!=="OK")selectedIds.add(normalizeId(it.id));});
   else selectedIds.clear();
   renderCmsTable(cmsItems);updateSelectionButtons();
 });
