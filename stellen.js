@@ -385,7 +385,7 @@ async function ensureCmsListLoaded(){
 }
 
 function applyCmsFilters() {
-  if (!cmsItems?.length) return;
+  if (!cmsItems || !cmsItems.length) return;
 
   let filtered = [...cmsItems];
 
@@ -406,14 +406,16 @@ function applyCmsFilters() {
     );
   }
 
-  // 🚩 Transfer-Flag-Filter
+  // 🚩 Transfer-Flag
   if ($flagFilter?.checked) {
     filtered = filtered.filter(item => item.transfer_flag === true);
   }
 
+  // Tabelle aktualisieren
   renderCmsTable(filtered);
   updateSelectionButtons();
 }
+
 
 
 $searchInput?.addEventListener("input", applyCmsFilters);
@@ -677,13 +679,23 @@ $deleteSelected?.addEventListener("click",async()=>{
   if(!sel.length){setNotice("Keine Auswahl.","warn");return;}
   await sendToMake("DELETE",sel);
 });
-$clearSelection?.addEventListener("click",()=>{getSelectionSet().clear();renderCmsTable(cmsItems);updateSelectionButtons();});
-$selectAll?.addEventListener("change",e=>{
-  const selection=getSelectionSet();
-  if(e.target.checked) cmsItems.forEach(it=>{if(it.ba_status!=="OK")selection.add(normalizeId(it.id));});
-  else selection.clear();
-  renderCmsTable(cmsItems);updateSelectionButtons();
+$clearSelection?.addEventListener("click", ()=>{
+  getSelectionSet().clear();
+  applyCmsFilters();               // ← respektiert aktuelle Filter
+  updateSelectionButtons();
 });
+
+$selectAll?.addEventListener("change", e=>{
+  const selection=getSelectionSet();
+  if(e.target.checked){
+    cmsItems.forEach(it=>{ if(it.ba_status!=="OK") selection.add(normalizeId(it.id)); });
+  }else{
+    selection.clear();
+  }
+  applyCmsFilters();               // ← statt renderCmsTable(cmsItems)
+  updateSelectionButtons();
+});
+
 $refresh?.addEventListener("click",loadList);
 
 /* ========= Init ========= */
@@ -691,3 +703,7 @@ loadList();
 
 /* ========= UX ========= */
 document.addEventListener("keydown",e=>{if(e.key==="Escape")$list?.classList.add("hidden");});
+
+// Wende Filter an, sobald Liste geladen ist
+setTimeout(applyCmsFilters, 500);
+
