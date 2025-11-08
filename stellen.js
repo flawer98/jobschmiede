@@ -95,10 +95,23 @@ async function postHook(url, payload) {
 }
 
 function toggleDisabled(disabled) {
-  ["save","upload-now","batch-10","batch-20","btn-upload-selected","btn-delete-selected","btn-generate-xml"].forEach(id=>{
+  ["save","upload-now","batch-10","batch-20","btn-upload-selected","btn-delete-selected"].forEach(id=>{
     const el=document.getElementById(id);
     if(el) el.disabled=disabled;
   });
+  const gen=document.getElementById("btn-generate-xml");
+  if(gen){
+    if(disabled){
+      gen.dataset.locked="1";
+      gen.disabled=true;
+    }else{
+      if(gen.dataset.locked){
+        delete gen.dataset.locked;
+        gen.disabled=selectedIds.size===0;
+      }
+    }
+  }
+  if(!disabled) updateSelectionButtons();
 }
 
 function isValidEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v||"")); }
@@ -217,6 +230,7 @@ $("#job-form")?.addEventListener("submit",async e=>{
   e.preventDefault();
   if(isSaving) return;
   const data=serializeForm(e.currentTarget);
+  applyExistingExternalId(data);
   const v=validate(data);
   if(!v.ok){setNotice(v.msg,"warn");return;}
   setNotice("Speichern …");toggleDisabled(true);
@@ -231,6 +245,7 @@ $("#job-form")?.addEventListener("submit",async e=>{
 });
 $("#upload-now")?.addEventListener("click",async()=>{
   const data=serializeForm($("#job-form"));
+  applyExistingExternalId(data);
   const v=validate(data);
   if(!v.ok){setNotice(v.msg,"warn");return;}
   const filename=buildBAFilename(data.supplier_id);
@@ -251,13 +266,13 @@ async function batchUpload(n){
 }
 
 /* ========= CMS-Listenlogik ========= */
-let cmsItems=[]; let selectedIds=new Set();
 const $cmsBody=$("#cms-tbody");
 const $selectAll=$("#select-all");
 const $uploadSelected=$("#btn-upload-selected");
 const $deleteSelected=$("#btn-delete-selected");
 const $clearSelection=$("#btn-clear-selection");
 const $refresh=$("#btn-refresh");
+const $generateXml=$("#btn-generate-xml");
 
 function renderCmsTable(items){
   if(!$cmsBody) return;
@@ -295,6 +310,7 @@ function updateSelectionButtons(){
   if($uploadSelected) $uploadSelected.disabled=n===0;
   if($deleteSelected) $deleteSelected.disabled=n===0;
   if($clearSelection) $clearSelection.disabled=n===0;
+  if($generateXml && !$generateXml.dataset.locked) $generateXml.disabled=n===0;
   if($uploadSelected) $uploadSelected.textContent=`Ausgewählte übertragen (${n})`;
   if($deleteSelected) $deleteSelected.textContent=`In BA löschen (${n})`;
   if($selectAll) $selectAll.checked=cmsItems.length&&cmsItems.every(it=>selectedIds.has(normalizeId(it.id)));
@@ -307,6 +323,8 @@ async function loadList(){
     const data=await res.json();
     if(!data||!Array.isArray(data.items)) throw new Error("Ungültige Antwort vom Server");
     cmsItems=data.items||[];
+    const validIds=new Set(cmsItems.map(it=>normalizeId(it.id)));
+    selectedIds=new Set(Array.from(selectedIds).filter(id=>validIds.has(id)));
     renderCmsTable(cmsItems);
     updateSelectionButtons();
     setNotice(`Es wurden ${cmsItems.length} Einträge geladen.`,"ok");
