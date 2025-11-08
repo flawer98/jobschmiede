@@ -1,9 +1,12 @@
 /* ========= Konfiguration ========= */
 const WH_SAVE             = "https://hook.eu2.make.com/krje3ftzgbomitzs8ca8a5f5mc5c5bhf";
+const WH_UPLOAD           = "https://hook.integromat.com/yyyyy";
+const WH_UPLOAD_LAST      = "https://hook.integromat.com/zzzzz";
 const WH_LIST             = "https://hook.eu2.make.com/1thp5v89ydmjmr6oaz9zfea0h5alnpky";
-const WH_UPLOAD_SELECTED  = "https://hook.integromat.com/BBBBB"; // Upload
-const WH_DELETE_SELECTED  = "https://hook.integromat.com/DDDDD"; // Delete
+const WH_UPLOAD_SELECTED  = "https://hook.integromat.com/BBBBB";
+const WH_DELETE_SELECTED  = "https://hook.integromat.com/DDDDD";
 
+// BA-Berufsliste (raw JSON)
 const JSON_URL = "https://raw.githubusercontent.com/flawer98/jobschmiede/main/ba_jobs.json";
 
 /* ========= Hilfsfunktionen ========= */
@@ -31,55 +34,159 @@ async function postHook(url, payload) {
 }
 
 function toggleDisabled(disabled) {
-  ["save","upload-now","btn-upload-selected","btn-delete-selected","btn-generate-xml"].forEach(id=>{
-    const el=document.getElementById(id); if(el) el.disabled=disabled;
+  ["save","upload-now","batch-10","batch-20","btn-upload-selected","btn-delete-selected","btn-generate-xml"].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.disabled=disabled;
   });
 }
 
-function padPartnerId10(v) {
-  const raw = String(v||"").trim().toLowerCase();
-  const m7 = raw.match(/^[vpk]\d{7}$/);
-  const m9 = raw.match(/^[vpk]\d{9}$/);
-  if (m7) return raw + "00";
-  if (m9) return raw;
+function isValidEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+function requireEitherEmailOrUrl(data){
+  const hasEmail=data.application_email&&isValidEmail(data.application_email);
+  const hasUrl=data.application_url&&/^https?:\/\//i.test(data.application_url);
+  return hasEmail||hasUrl;
+}
+function padPartnerId10(v){
+  const raw=String(v||"").trim().toLowerCase();
+  const m7=raw.match(/^[vpk]\d{7}$/);
+  const m9=raw.match(/^[vpk]\d{9}$/);
+  if(m7) return raw+"00";
+  if(m9) return raw;
   return raw;
 }
-
-function formatTimestampForBA(d=new Date()) {
+function formatTimestampForBA(d=new Date()){
   const pad=n=>String(n).padStart(2,"0");
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
 }
-
-function buildBAFilename(partnerId) {
-  const pid = padPartnerId10(partnerId);
+function buildBAFilename(partnerId){
+  const pid=padPartnerId10(partnerId);
   if(!/^[vpk]\d{9}$/.test(pid)) return "DSXXXXXXXXXX_0000-00-00_00-00-00.xml";
-  const ts=formatTimestampForBA().replace(/[:T]/g,"-");
+  const ts=formatTimestampForBA();
   return `DS${pid}_${ts}.xml`;
 }
-
 function escapeXML(str){
   return String(str??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");
 }
+function updateFilenamePreview(){
+  const pid=$("#supplier_id")?.value||"";
+  $("#filename_preview").textContent=buildBAFilename(pid);
+}
 
-/* ========= CMS Liste ========= */
-let cmsItems = [];
-let selectedIds = new Set();
+/* ========= Autocomplete (BA Beruf) ========= */
+let jobIndex=[];
+let debounceTimer=null;
+const MAX_RESULTS=15;
+const $search=$("#ba-search");
+const $list=$("#suggestions");
+const $code=$("#ba_title_code");
+const $label=$("#ba_title_label");
+const $bkz=$("#ba_bkz");
 
-const $cmsBody         = document.getElementById("cms-tbody");
-const $selectAll       = document.getElementById("select-all");
-const $uploadSelected  = document.getElementById("btn-upload-selected");
-const $deleteSelected  = document.getElementById("btn-delete-selected");
-const $clearSelection  = document.getElementById("btn-clear-selection");
-const $refresh         = document.getElementById("btn-refresh");
+async function loadJobs(){
+  if(jobIndex.length) return;
+  try{
+    const res=await fetch(JSON_URL,{cache:"force-cache"});
+    jobIndex=await res.json();
+  }catch{ setNotice("Konnte BA-Jobliste nicht laden.","error"); }
+}
+function searchJobs(q){
+  q=q.toLowerCase();
+  return jobIndex.filter(j=>
+    (j.neutral_kurz||"").toLowerCase().includes(q)||
+    (j.bkz||"").toLowerCase().includes(q)||
+    (j.title_code||"").toLowerCase().includes(q)
+  ).slice(0,MAX_RESULTS);
+}
+function renderSuggestions(res){
+  if(!res.length){$list.innerHTML="";$list.classList.add("hidden");return;}
+  $list.innerHTML=res.map(r=>`
+    <li class="ba-suggestion" data-code="${r.title_code}" data-label="${r.neutral_kurz}" data-bkz="${r.bkz}">
+      <span>${r.neutral_kurz}</span><small>${r.bkz}</small>
+    </li>`).join('');
+  $list.classList.remove("hidden");
+}
+$search?.addEventListener("focus",loadJobs);
+$search?.addEventListener("input",e=>{
+  clearTimeout(debounceTimer);
+  const v=e.target.value.trim();
+  if(v.length<2){$list.classList.add("hidden");return;}
+  debounceTimer=setTimeout(()=>renderSuggestions(searchJobs(v)),150);
+});
+$list?.addEventListener("click",e=>{
+  const li=e.target.closest("li");
+  if(!li)return;
+  $code.value=li.dataset.code;
+  $label.value=li.dataset.label;
+  $bkz.value=li.dataset.bkz;
+  $search.value=`${li.dataset.label} (${li.dataset.bkz})`;
+  $list.classList.add("hidden");
+});
+
+/* ========= Formular ========= */
+function serializeForm(form){
+  const data=Object.fromEntries(new FormData(form).entries());
+  data.transfer_flag=$("#transfer_flag")?.checked||false;
+  if(data.working_hours) data.working_hours=Number(data.working_hours);
+  return data;
+}
+function validate(data){
+  const form=$("#job-form");
+  if(!form.checkValidity()){form.reportValidity();return{ok:false,msg:"Bitte Pflichtfelder prüfen."};}
+  if(!data.ba_title_code||!data.ba_bkz||!data.ba_title_label) return{ok:false,msg:"Bitte BA-Beruf auswählen."};
+  if(!requireEitherEmailOrUrl(data)) return{ok:false,msg:"Bitte E-Mail ODER Bewerbungs-URL angeben."};
+  if(!data.supplier_id||String(data.supplier_id).trim().length!==10) return{ok:false,msg:"Partner-ID muss 10-stellig sein."};
+  return{ok:true};
+}
+$("#supplier_id")?.addEventListener("input",updateFilenamePreview);
+updateFilenamePreview();
+
+$("#job-form")?.addEventListener("submit",async e=>{
+  e.preventDefault();
+  const data=serializeForm(e.currentTarget);
+  const v=validate(data);
+  if(!v.ok){setNotice(v.msg,"warn");return;}
+  setNotice("Speichern …");toggleDisabled(true);
+  try{
+    const resp=await postHook(WH_SAVE,{item:data});
+    setNotice(resp,"ok");
+    if(resp?.itemId&&!$("#external_id").value) $("#external_id").value=resp.itemId;
+  }catch{setNotice("Fehler beim Speichern.","error");}
+  finally{toggleDisabled(false);updateFilenamePreview();}
+});
+$("#upload-now")?.addEventListener("click",async()=>{
+  const data=serializeForm($("#job-form"));
+  const v=validate(data);
+  if(!v.ok){setNotice(v.msg,"warn");return;}
+  const filename=buildBAFilename(data.supplier_id);
+  setNotice(`Übertrage an BA … ${filename}`);toggleDisabled(true);
+  try{
+    const resp=await postHook(WH_UPLOAD,{item:data,filename_hint:filename});
+    if(resp?.status==="OK"||resp?.ok===true) setNotice(resp,"ok"); else setNotice(resp,"error");
+  }catch{setNotice("Fehler beim Upload.","error");}
+  finally{toggleDisabled(false);}
+});
+$("#batch-10")?.addEventListener("click",()=>batchUpload(10));
+$("#batch-20")?.addEventListener("click",()=>batchUpload(20));
+async function batchUpload(n){
+  setNotice(`Batch-Upload (${n}) gestartet …`);toggleDisabled(true);
+  try{setNotice(await postHook(WH_UPLOAD_LAST,{limit:n}),"ok");}
+  catch{setNotice("Fehler beim Batch-Upload.","error");}
+  finally{toggleDisabled(false);}
+}
+
+/* ========= CMS-Listenlogik ========= */
+let cmsItems=[]; let selectedIds=new Set();
+const $cmsBody=$("#cms-tbody");
+const $selectAll=$("#select-all");
+const $uploadSelected=$("#btn-upload-selected");
+const $deleteSelected=$("#btn-delete-selected");
+const $clearSelection=$("#btn-clear-selection");
+const $refresh=$("#btn-refresh");
 
 function renderCmsTable(items){
   if(!$cmsBody) return;
-  if(!items?.length){
-    $cmsBody.innerHTML="<tr><td colspan='7'>Keine Einträge gefunden.</td></tr>";
-    return;
-  }
-
-  $cmsBody.innerHTML = items.map(it=>`
+  if(!items?.length){$cmsBody.innerHTML="<tr><td colspan='7'>Keine Einträge gefunden.</td></tr>";return;}
+  $cmsBody.innerHTML=items.map(it=>`
     <tr>
       <td><input type="checkbox" class="row-check" data-id="${it.id}" ${selectedIds.has(it.id)?"checked":""} ${it.ba_status==="OK"?"disabled":""}></td>
       <td>${escapeXML(it.job_title||"-")}</td>
@@ -87,9 +194,8 @@ function renderCmsTable(items){
       <td><small>${it.updated_on?new Date(it.updated_on).toLocaleDateString("de-DE")+" "+new Date(it.updated_on).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}):"-"}</small></td>
       <td>${it.transfer_flag?"<span class='ba-chip'>true</span>":"<span class='ba-chip'>false</span>"}</td>
       <td><span class="ba-chip ${it.ba_status==="OK"?"ba-chip--ok":it.ba_status==="ERROR"?"ba-chip--error":"ba-chip--wait"}">${escapeXML(it.ba_status||"-")}</span></td>
-      <td><button type="button" class="ba-btn ba-btn--ghost" data-id="${it.id}" data-action="upload-one" ${it.ba_status==="OK"?"disabled":""}>Upload</button></td>
-    </tr>
-  `).join("");
+      <td><button type="button" class="ba-btn ba-btn--ghost" data-id="${it.id}" ${it.ba_status==="OK"?"disabled":""}>Upload</button></td>
+    </tr>`).join("");
 
   $cmsBody.querySelectorAll(".row-check").forEach(cb=>{
     cb.addEventListener("change",e=>{
@@ -98,26 +204,25 @@ function renderCmsTable(items){
       updateSelectionButtons();
     });
   });
-
-  $cmsBody.querySelectorAll("button[data-action='upload-one']").forEach(btn=>{
+  $cmsBody.querySelectorAll("button.ba-btn").forEach(btn=>{
     btn.addEventListener("click",async e=>{
       const id=e.currentTarget.dataset.id;
       const job=cmsItems.find(j=>j.id===id);
       if(!job) return;
-      if(job.ba_status==="OK"){ setNotice("Bereits gesendet – übersprungen","warn"); return; }
+      if(job.ba_status==="OK"){setNotice("Bereits gesendet – übersprungen","warn");return;}
       await sendToMake("INSERT",[job]);
     });
   });
 }
-
 function updateSelectionButtons(){
   const n=selectedIds.size;
-  [$uploadSelected,$deleteSelected,$clearSelection].forEach(b=>{ if(b) b.disabled=n===0; });
+  if($uploadSelected) $uploadSelected.disabled=n===0;
+  if($deleteSelected) $deleteSelected.disabled=n===0;
+  if($clearSelection) $clearSelection.disabled=n===0;
   if($uploadSelected) $uploadSelected.textContent=`Ausgewählte übertragen (${n})`;
   if($deleteSelected) $deleteSelected.textContent=`In BA löschen (${n})`;
-  if($selectAll) $selectAll.checked=cmsItems.length && cmsItems.every(it=>selectedIds.has(it.id));
+  if($selectAll) $selectAll.checked=cmsItems.length&&cmsItems.every(it=>selectedIds.has(it.id));
 }
-
 async function loadList(){
   setNotice("Lade CMS-Einträge …");
   try{
@@ -127,32 +232,26 @@ async function loadList(){
     renderCmsTable(cmsItems);
     updateSelectionButtons();
     setNotice(`Es wurden ${cmsItems.length} Einträge geladen.`,"ok");
-  }catch{
-    setNotice("Fehler beim Laden der Liste.","error");
-  }
+  }catch{setNotice("Fehler beim Laden der Liste.","error");}
 }
 
 /* ========= XML Builder ========= */
 function buildMultiJobXML(jobs,typeOfLoad="INSERT"){
   if(!jobs.length) return "";
   const supplierId=padPartnerId10(jobs[0].supplier_id);
-  const timestamp=formatTimestampForBA();
+  const timestamp=new Date().toISOString();
   let xml=`<?xml version="1.0" encoding="UTF-8"?>\n`;
   xml+=`<HRBAXMLJobPositionPosting xmlns="http://xml.hr-xml.org/2007-04-15">\n`;
   xml+=`  <Header>\n`;
   xml+=`    <SupplierId>${escapeXML(supplierId)}</SupplierId>\n`;
-  xml+=`    <Timestamp>${timestamp}</Timestamp>\n`;
+  xml+=`    <Timestamp>${escapeXML(timestamp)}</Timestamp>\n`;
   xml+=`    <TypeOfLoad>${escapeXML(typeOfLoad)}</TypeOfLoad>\n`;
   xml+=`  </Header>\n`;
   xml+=`  <JobPositionPostings>\n`;
-  for(const job of jobs){
-    xml+=buildBAJobXML(job);
-  }
-  xml+=`  </JobPositionPostings>\n`;
-  xml+=`</HRBAXMLJobPositionPosting>`;
+  for(const job of jobs){ xml+=buildBAJobXML(job); }
+  xml+=`  </JobPositionPostings>\n</HRBAXMLJobPositionPosting>`;
   return xml;
 }
-
 function buildBAJobXML(data){
   let xml=`    <JobPositionPosting>\n`;
   xml+=`      <PositionDetail>\n`;
@@ -161,8 +260,8 @@ function buildBAJobXML(data){
   xml+=`        <Description>${escapeXML(data.description_rich||"")}</Description>\n`;
   xml+=`        <EmploymentType>${escapeXML(data.employment_type||"")}</EmploymentType>\n`;
   if(data.working_hours) xml+=`        <WorkingHours>${Number(data.working_hours)}</WorkingHours>\n`;
-  if(data.valid_from)   xml+=`        <PostingStartDate>${escapeXML(data.valid_from)}</PostingStartDate>\n`;
-  if(data.valid_to)     xml+=`        <PostingEndDate>${escapeXML(data.valid_to)}</PostingEndDate>\n`;
+  if(data.valid_from) xml+=`        <PostingStartDate>${escapeXML(data.valid_from)}</PostingStartDate>\n`;
+  if(data.valid_to) xml+=`        <PostingEndDate>${escapeXML(data.valid_to)}</PostingEndDate>\n`;
   xml+=`      </PositionDetail>\n`;
   xml+=`      <Company>\n`;
   xml+=`        <Name>${escapeXML(data.company_name||"")}</Name>\n`;
@@ -176,29 +275,28 @@ function buildBAJobXML(data){
   xml+=`      <Contact>\n`;
   xml+=`        <Name>${escapeXML(data.contact_name||"")}</Name>\n`;
   if(data.application_email) xml+=`        <Email>${escapeXML(data.application_email)}</Email>\n`;
-  if(data.application_url)   xml+=`        <Url>${escapeXML(data.application_url)}</Url>\n`;
+  if(data.application_url) xml+=`        <Url>${escapeXML(data.application_url)}</Url>\n`;
   xml+=`      </Contact>\n`;
   xml+=`    </JobPositionPosting>\n`;
   return xml;
 }
 
-/* ========= XML Download ========= */
+/* ========= XML Datei generieren ========= */
 $("#btn-generate-xml")?.addEventListener("click",async()=>{
-  if(!selectedIds.size){ setNotice("Bitte mindestens eine Stelle auswählen.","warn"); return; }
-  const selected=cmsItems.filter(it=>selectedIds.has(it.id));
-  if(!selected.length){ setNotice("Keine passenden CMS-Daten gefunden.","warn"); return; }
-  const xml=buildMultiJobXML(selected,"INSERT");
-  const filename=buildBAFilename(selected[0]?.supplier_id);
+  if(!selectedIds.size){setNotice("Bitte mindestens eine Stelle auswählen.","warn");return;}
+  const sel=cmsItems.filter(it=>selectedIds.has(it.id));
+  if(!sel.length){setNotice("Keine passenden Daten.","warn");return;}
+  const xml=buildMultiJobXML(sel,"INSERT");
+  const filename=buildBAFilename(sel[0]?.supplier_id);
   const blob=new Blob([xml],{type:"application/xml"});
   const url=URL.createObjectURL(blob);
-  const a=document.createElement("a"); a.href=url; a.download=filename; a.click();
-  URL.revokeObjectURL(url);
-  setNotice(`XML-Datei "${filename}" wurde erzeugt.`,"ok");
+  const a=document.createElement("a");a.href=url;a.download=filename;a.click();URL.revokeObjectURL(url);
+  setNotice(`XML-Datei "${filename}" mit ${sel.length} Stellen erzeugt.`,"ok");
 });
 
-/* ========= Übertragung an Make ========= */
+/* ========= Make Upload/Delete ========= */
 async function sendToMake(typeOfLoad,jobs){
-  if(!jobs.length) return;
+  if(!jobs.length)return;
   const filename=buildBAFilename(jobs[0]?.supplier_id);
   const xml=buildMultiJobXML(jobs,typeOfLoad);
   const hook=typeOfLoad==="DELETE"?WH_DELETE_SELECTED:WH_UPLOAD_SELECTED;
@@ -207,49 +305,38 @@ async function sendToMake(typeOfLoad,jobs){
   try{
     const resp=await postHook(hook,{
       filename,
-      supplier_id: jobs[0]?.supplier_id,
+      supplier_id:jobs[0]?.supplier_id,
       typeOfLoad,
-      ids: jobs.map(j=>j.id),
-      xml_content: xml
+      ids:jobs.map(j=>j.id),
+      xml_content:xml
     });
-    if(resp?.status==="OK"||resp?.ok===true){
-      setNotice(resp,"ok");
-    }else{
-      setNotice(resp,"error");
-    }
-  }catch{
-    setNotice("Fehler beim Senden an Make.","error");
-  }finally{
-    toggleDisabled(false);
-  }
+    if(resp?.status==="OK"||resp?.ok===true) setNotice(resp,"ok");
+    else setNotice(resp,"error");
+  }catch{setNotice("Fehler beim Senden an Make.","error");}
+  finally{toggleDisabled(false);}
 }
 
-/* ========= Buttons ========= */
+/* ========= Button Aktionen ========= */
 $uploadSelected?.addEventListener("click",async()=>{
-  if(!selectedIds.size){ setNotice("Bitte auswählen.","warn"); return; }
   const sel=cmsItems.filter(it=>selectedIds.has(it.id)&&it.ba_status!=="OK");
-  if(!sel.length){ setNotice("Alle ausgewählten Stellen wurden bereits gesendet.","warn"); return; }
+  if(!sel.length){setNotice("Alle ausgewählten Stellen wurden bereits gesendet.","warn");return;}
   await sendToMake("INSERT",sel);
 });
-
 $deleteSelected?.addEventListener("click",async()=>{
-  if(!selectedIds.size){ setNotice("Bitte auswählen.","warn"); return; }
   const sel=cmsItems.filter(it=>selectedIds.has(it.id));
+  if(!sel.length){setNotice("Keine Auswahl.","warn");return;}
   await sendToMake("DELETE",sel);
 });
-
-$clearSelection?.addEventListener("click",()=>{
-  selectedIds.clear();
-  renderCmsTable(cmsItems);
-  updateSelectionButtons();
-});
+$clearSelection?.addEventListener("click",()=>{selectedIds.clear();renderCmsTable(cmsItems);updateSelectionButtons();});
 $selectAll?.addEventListener("change",e=>{
-  if(e.target.checked) cmsItems.forEach(it=>{ if(it.ba_status!=="OK") selectedIds.add(it.id); });
+  if(e.target.checked) cmsItems.forEach(it=>{if(it.ba_status!=="OK")selectedIds.add(it.id);});
   else selectedIds.clear();
-  renderCmsTable(cmsItems);
-  updateSelectionButtons();
+  renderCmsTable(cmsItems);updateSelectionButtons();
 });
 $refresh?.addEventListener("click",loadList);
 
 /* ========= Init ========= */
 loadList();
+
+/* ========= UX ========= */
+document.addEventListener("keydown",e=>{if(e.key==="Escape")$list?.classList.add("hidden");});
