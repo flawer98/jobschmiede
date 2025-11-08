@@ -68,11 +68,15 @@ function formatTimestampForBA(d = new Date()) {
 }
 
 function buildBAFilename(partnerId) {
-  // A="D" (Standarddatei), B="S" (Stellenangebote)
-  // DS<PartnerId10>_<yyyy-MM-dd_HH-mm-ss>.xml
-  const pid = padPartnerId10(partnerId);
-  const ts = formatTimestampForBA();
-  if (!pid || pid.length !== 10) return "— Partner-ID ungültig —";
+  // Partner-ID prüfen und formatieren
+  const pid = String(partnerId || "").trim();
+  if (!pid || pid.length !== 10) {
+    return "DSXXXXXXXXXX_0000-00-00_00-00-00.xml";
+  }
+
+  const d = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
   return `DS${pid}_${ts}.xml`;
 }
 
@@ -358,15 +362,16 @@ $("#btn-generate-xml")?.addEventListener("click", async () => {
   const xml = buildMultiJobXML(selectedItems);
 
   // Download anbieten
+  const filename = buildBAFilename(selectedItems[0]?.supplier_id);
   const blob = new Blob([xml], { type: "application/xml" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `Stellen_${new Date().toISOString().split("T")[0]}.xml`;
+  a.download = filename;
   a.click();
+  
+  setNotice(`XML-Datei "${filename}" mit ${selectedItems.length} Stellen wurde erzeugt.`, "ok");
 
-  setNotice(`XML-Datei mit ${selectedItems.length} Stellen wurde erzeugt.`, "ok");
-});
 
 /* ========= Mehrfach-XML-Builder ========= */
 function buildMultiJobXML(jobs) {
