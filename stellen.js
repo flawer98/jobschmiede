@@ -13,56 +13,11 @@ const JSON_URL = "https://raw.githubusercontent.com/flawer98/jobschmiede/main/ba
 const $  = sel => document.querySelector(sel);
 const $$ = sel => Array.from(document.querySelectorAll(sel));
 
-let cmsItems = [];
-let selectedIds = new Set();
-
 function logError(context, error) {
   console.error(`[${context}]`, error);
 }
 
 const normalizeId = value => String(value ?? "");
-
-const normalizeComparable = value => String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-
-function findCmsItemMatchByName(data) {
-  if (!cmsItems.length || !data) return null;
-  const externalId = normalizeId(data.external_id);
-  if (externalId) {
-    const byId = cmsItems.find(item => normalizeId(item.id) === externalId);
-    if (byId) return byId;
-  }
-  const title = normalizeComparable(data.job_title);
-  if (!title) return null;
-  const supplier = normalizeComparable(data.supplier_id);
-  return cmsItems.find(item => {
-    if (!item) return false;
-    const sameTitle = normalizeComparable(item.job_title) === title;
-    if (!sameTitle) return false;
-    if (supplier) {
-      const itemSupplier = normalizeComparable(item.supplier_id);
-      if (itemSupplier && itemSupplier !== supplier) return false;
-    }
-    const city = normalizeComparable(data.location_city);
-    if (city) {
-      const itemCity = normalizeComparable(item.location_city);
-      if (itemCity && itemCity !== city) return false;
-    }
-    return true;
-  }) || null;
-}
-
-function applyExistingExternalId(data) {
-  if (!data) return data;
-  const existing = findCmsItemMatchByName(data);
-  if (!existing) return data;
-  const existingId = normalizeId(existing.id);
-  if (!existingId) return data;
-  if (normalizeId(data.external_id) === existingId) return data;
-  const hidden = $("#external_id");
-  if (hidden) hidden.value = existingId;
-  data.external_id = existingId;
-  return data;
-}
 
 function extractItemId(response) {
   if (!response) return null;
