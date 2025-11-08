@@ -385,6 +385,8 @@ async function ensureCmsListLoaded(){
 }
 
 function applyCmsFilters() {
+  if (!cmsItems?.length) return;
+
   let filtered = [...cmsItems];
 
   // 🔍 Textsuche (Titel oder Ort)
@@ -397,10 +399,10 @@ function applyCmsFilters() {
   }
 
   // 🏷️ Statusfilter
-  const status = $statusFilter?.value || "alle";
+  const status = ($statusFilter?.value || "alle").toLowerCase();
   if (status !== "alle") {
     filtered = filtered.filter(item =>
-      (item.ba_status || "").toLowerCase() === status.toLowerCase()
+      (item.ba_status || "").toLowerCase() === status
     );
   }
 
@@ -409,10 +411,10 @@ function applyCmsFilters() {
     filtered = filtered.filter(item => item.transfer_flag === true);
   }
 
-  // Tabelle neu rendern
   renderCmsTable(filtered);
   updateSelectionButtons();
 }
+
 
 $searchInput?.addEventListener("input", applyCmsFilters);
 $statusFilter?.addEventListener("change", applyCmsFilters);
@@ -487,8 +489,7 @@ async function loadList(options={}){
       const filtered=new Set();
       currentSelection.forEach(id=>{if(validIds.has(id)) filtered.add(id);});
       selectionState.ids=filtered;
-      renderCmsTable(cmsItems);
-      updateSelectionButtons();
+      applyCmsFilters();
       if(!silent && !preserveNotice){
         setNotice(`Es wurden ${cmsItems.length} Einträge geladen.`,"ok");
       }
@@ -516,18 +517,25 @@ function resolvePartnerIdFromJobsOrForm(jobs) {
   const valid = id => /^[VPK]\d{9}$/i.test(id);
   const norm  = v => padPartnerId10(String(v || "").trim());
 
-  const jobIds = (jobs || [])
-    .map(j => norm(j?.supplier_id))
-    .filter(valid);
-
-  // Falls alle ausgewählten Jobs die gleiche gültige ID haben → nimm diese
-  if (jobIds.length && jobIds.every(id => id === jobIds[0])) {
-    return jobIds[0];
+  // Wenn genau ein Job ausgewählt ist → direkt dessen ID nehmen
+  if (Array.isArray(jobs) && jobs.length === 1) {
+    const id = norm(jobs[0]?.supplier_id);
+    if (valid(id)) return id;
   }
 
-  // sonst auf Formularfeld zurückgreifen
+  // Wenn mehrere Jobs ausgewählt → prüfen, ob alle dieselbe gültige ID haben
+  if (Array.isArray(jobs) && jobs.length > 1) {
+    const jobIds = jobs.map(j => norm(j?.supplier_id)).filter(valid);
+    const uniqueIds = [...new Set(jobIds)];
+    if (uniqueIds.length === 1) return uniqueIds[0]; // alle gleich → ok
+  }
+
+  // Fallback: Formularfeld (#supplier_id)
   const formId = norm($("#supplier_id")?.value || "");
-  return valid(formId) ? formId : "";
+  if (valid(formId)) return formId;
+
+  // Nichts brauchbares gefunden
+  return "";
 }
 
 
