@@ -280,6 +280,8 @@ function renderCmsTable(items) {
       const id = e.target.dataset.id;
       e.target.checked ? selectedIds.add(id) : selectedIds.delete(id);
       updateSelectionButtons();
+      document.getElementById("btn-generate-xml").disabled = selectedIds.size === 0;
+
     });
   });
 
