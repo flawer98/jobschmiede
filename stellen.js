@@ -277,6 +277,7 @@ const $generateXml=$("#btn-generate-xml");
 function renderCmsTable(items){
   if(!$cmsBody) return;
   if(!items?.length){$cmsBody.innerHTML="<tr><td colspan='7'>Keine Einträge gefunden.</td></tr>";return;}
+  const selection=getSelectionSet();
   $cmsBody.innerHTML=items.map(it=>`
     <tr>
       <td><input type="checkbox" class="row-check" data-id="${escapeHTML(it.id)}" ${selectedIds.has(normalizeId(it.id))?"checked":""} ${it.ba_status==="OK"?"disabled":""}></td>
@@ -306,7 +307,8 @@ function renderCmsTable(items){
   });
 }
 function updateSelectionButtons(){
-  const n=selectedIds.size;
+  const selection=getSelectionSet();
+  const n=selection.size;
   if($uploadSelected) $uploadSelected.disabled=n===0;
   if($deleteSelected) $deleteSelected.disabled=n===0;
   if($clearSelection) $clearSelection.disabled=n===0;
@@ -430,7 +432,7 @@ $deleteSelected?.addEventListener("click",async()=>{
   if(!sel.length){setNotice("Keine Auswahl.","warn");return;}
   await sendToMake("DELETE",sel);
 });
-$clearSelection?.addEventListener("click",()=>{selectedIds.clear();renderCmsTable(cmsItems);updateSelectionButtons();});
+$clearSelection?.addEventListener("click",()=>{getSelectionSet().clear();renderCmsTable(cmsItems);updateSelectionButtons();});
 $selectAll?.addEventListener("change",e=>{
   if(e.target.checked) cmsItems.forEach(it=>{if(it.ba_status!=="OK")selectedIds.add(normalizeId(it.id));});
   else selectedIds.clear();
