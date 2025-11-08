@@ -189,13 +189,12 @@ function requireEitherEmailOrUrl(data){
   const hasUrl=data.application_url&&/^https?:\/\//i.test(String(data.application_url||""));
   return hasEmail||hasUrl;
 }
-function padPartnerId10(v){
-  const raw=String(v||"").trim().toUpperCase();
-  const m7=raw.match(/^[VPK]\d{7}$/);
-  const m9=raw.match(/^[VPK]\d{9}$/);
-  if(m7) return raw+"00";
-  if(m9) return raw;
-  return raw;
+function padPartnerId10(v) {
+  const raw = String(v || "").trim().toUpperCase();
+  const clean = raw.replace(/[^A-Z0-9]/g, "");
+  if (!/^[VPK]/.test(clean)) return "";
+  const digits = clean.slice(1).padStart(7, "0");
+  return clean[0] + digits + "00";
 }
 function formatTimestampForBA(d=new Date()){
   const pad=n=>String(n).padStart(2,"0");
@@ -461,6 +460,26 @@ async function loadList(options={}){
   return run;
 }
 
+/* ========= Partner-ID Ermittlung ========= */
+function resolvePartnerIdFromJobsOrForm(jobs) {
+  const valid = id => /^[VPK]\d{9}$/.test(id);
+  const norm  = v => padPartnerId10(String(v || "").trim());
+
+  const jobIds = (jobs || [])
+    .map(j => norm(j?.supplier_id))
+    .filter(valid);
+
+  // Falls alle ausgewählten Jobs die gleiche gültige ID haben → nimm diese
+  if (jobIds.length && jobIds.every(id => id === jobIds[0])) {
+    return jobIds[0];
+  }
+
+  // sonst auf Formularfeld zurückgreifen
+  const formId = norm($("#supplier_id")?.value || "");
+  return valid(formId) ? formId : "";
+}
+
+
 /* ========= XML Builder ========= */
 function buildMultiJobXML(jobs,typeOfLoad="INSERT"){
   if(!jobs.length) return "";
@@ -508,41 +527,83 @@ function buildBAJobXML(data){
 }
 
 /* ========= XML Datei generieren ========= */
-$("#btn-generate-xml")?.addEventListener("click",async()=>{
-  const selection=getSelectionSet();
-  if(!selection.size){setNotice("Bitte mindestens eine Stelle auswählen.","warn");return;}
-  const sel=cmsItems.filter(it=>selection.has(normalizeId(it.id)));
-  if(!sel.length){setNotice("Keine passenden Daten.","warn");return;}
-  const xml=buildMultiJobXML(sel,"INSERT");
-  const filename=buildBAFilename(sel[0]?.supplier_id);
-  const blob=new Blob([xml],{type:"application/xml"});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");a.href=url;a.download=filename;a.click();URL.revokeObjectURL(url);
-  setNotice(`XML-Datei "${filename}" mit ${sel.length} Stellen erzeugt.`,"ok");
+$("#btn-generate-xml")?.addEventListener("click", async () => {
+  const selection = getSelectionSet();
+  if (!selection.size) {
+    setNotice("Bitte mindestens eine Stelle auswählen.", "warn");
+    return;
+  }
+
+  const sel = cmsItems.filter(it => selection.has(normalizeId(it.id)));
+  if (!sel.length) {
+    setNotice("Keine passenden Daten.", "warn");
+    return;
+  }
+
+  // ✅ Partner-ID robust bestimmen
+  const partnerId = resolvePartnerIdFromJobsOrForm(sel);
+  if (!partnerId) {
+    setNotice("Ungültige oder fehlende Partner-ID. Bitte Partner-ID im Formular prüfen.", "error");
+    return;
+  }
+
+  const xml = buildMultiJobXML(sel, "INSERT");
+  const filename = buildBAFilename(partnerId);
+
+  // Datei-Export mit richtigem Namen
+  const blob = new Blob([xml], { type: "application/xml" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  setNotice(`XML-Datei "${filename}" mit ${sel.length} Stellen erzeugt.`, "ok");
 });
 
+
 /* ========= Make Upload/Delete ========= */
-async function sendToMake(typeOfLoad,jobs){
-  if(!jobs.length)return;
-  const filename=buildBAFilename(jobs[0]?.supplier_id);
-  const xml=buildMultiJobXML(jobs,typeOfLoad);
-  if(!xml){setNotice("Konnte XML nicht erzeugen.","error");return;}
-  const hook=typeOfLoad==="DELETE"?WH_DELETE_SELECTED:WH_UPLOAD_SELECTED;
-  setNotice(`${typeOfLoad==="DELETE"?"Lösche":"Übertrage"} ${jobs.length} Einträge …`);
+async function sendToMake(typeOfLoad, jobs) {
+  if (!jobs.length) return;
+
+  // ✅ Partner-ID wie oben ermitteln
+  const partnerId = resolvePartnerIdFromJobsOrForm(jobs);
+  if (!partnerId) {
+    setNotice("Ungültige oder fehlende Partner-ID. Upload abgebrochen.", "error");
+    return;
+  }
+
+  const filename = buildBAFilename(partnerId);
+  const xml = buildMultiJobXML(jobs, typeOfLoad);
+  if (!xml) {
+    setNotice("Konnte XML nicht erzeugen.", "error");
+    return;
+  }
+
+  const hook = typeOfLoad === "DELETE" ? WH_DELETE_SELECTED : WH_UPLOAD_SELECTED;
+  setNotice(`${typeOfLoad === "DELETE" ? "Lösche" : "Übertrage"} ${jobs.length} Einträge …`);
   toggleDisabled(true);
-  try{
-    const resp=await postHook(hook,{
+
+  try {
+    const resp = await postHook(hook, {
       filename,
-      supplier_id:jobs[0]?.supplier_id,
+      supplier_id: partnerId,
       typeOfLoad,
-      ids:jobs.map(j=>j.id),
-      xml_content:xml
+      ids: jobs.map(j => j.id),
+      xml_content: xml
     });
-    if(resp?.status==="OK"||resp?.ok===true) setNotice(resp,"ok");
-    else setNotice(resp||"Unbekannte Antwort","error");
-  }catch(error){setNotice(extractErrorMessage(error,"Fehler beim Senden an Make."),"error");}
-  finally{toggleDisabled(false);}
+
+    if (resp?.status === "OK" || resp?.ok === true) setNotice(resp, "ok");
+    else setNotice(resp || "Unbekannte Antwort", "error");
+
+  } catch (error) {
+    setNotice(extractErrorMessage(error, "Fehler beim Senden an Make."), "error");
+  } finally {
+    toggleDisabled(false);
+  }
 }
+
 
 /* ========= Button Aktionen ========= */
 $uploadSelected?.addEventListener("click",async()=>{
