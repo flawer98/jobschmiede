@@ -71,28 +71,22 @@ function registerCmsItem(item) {
 }
 
 function findCmsItemMatchByName(data) {
-  if (!data) return null;
-  const externalId = normalizeId(data.external_id);
-  if (externalId && cmsIdIndex.has(externalId)) {
-    return cmsIdIndex.get(externalId);
-  }
-  const key = buildCmsKey(data);
-  if (!key) return null;
-  return cmsNameIndex.get(key) ?? null;
+  if (!cmsItems.length || !data) return null;
+
+  const title = normalizeComparable(data.job_title);
+  const city  = normalizeComparable(data.location_city);
+
+  if (!title || !city) return null;
+
+  // Suche nach gleichem Titel UND Stadt
+  return cmsItems.find(item => {
+    if (!item) return false;
+    const sameTitle = normalizeComparable(item.job_title) === title;
+    const sameCity  = normalizeComparable(item.location_city) === city;
+    return sameTitle && sameCity;
+  }) || null;
 }
 
-function applyExistingExternalId(data) {
-  if (!data) return data;
-  const existing = findCmsItemMatchByName(data);
-  if (!existing) return data;
-  const existingId = normalizeId(existing.id);
-  if (!existingId) return data;
-  if (normalizeId(data.external_id) === existingId) return data;
-  const hidden = $("#external_id");
-  if (hidden) hidden.value = existingId;
-  data.external_id = existingId;
-  return data;
-}
 
 function extractItemId(response) {
   if (!response) return null;
@@ -306,7 +300,12 @@ $("#job-form")?.addEventListener("submit",async e=>{
   if(isSaving) return;
   await ensureCmsListLoaded();
   const data=serializeForm(e.currentTarget);
-  applyExistingExternalId(data);
+  // Dublettenprüfung: Jobtitel + Stadt
+  const duplicate = findCmsItemMatchByName(data);
+  if (duplicate) {
+  setNotice(`Ein Job mit dem Titel "${data.job_title}" in "${data.location_city}" existiert bereits. Bitte ändere Titel oder Stadt.`, "error");
+  return;
+}
   const v=validate(data);
   if(!v.ok){setNotice(v.msg,"warn");return;}
   setNotice("Speichern …");toggleDisabled(true);
