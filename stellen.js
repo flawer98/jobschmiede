@@ -190,12 +190,21 @@ function requireEitherEmailOrUrl(data){
   return hasEmail||hasUrl;
 }
 function padPartnerId10(v) {
-  const raw = String(v || "").trim().toUpperCase();
-  const clean = raw.replace(/[^A-Z0-9]/g, "");
-  if (!/^[VPK]/.test(clean)) return "";
-  const digits = clean.slice(1).padStart(7, "0");
-  return clean[0] + digits + "00";
+  const raw = String(v || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!raw) return "";
+  // Falls bereits korrektes Format (V/P/K + 9 Ziffern)
+  if (/^[VPK]\d{9}$/.test(raw)) return raw;
+  // Falls 7-stellig, hänge "00" an
+  if (/^[VPK]\d{7}$/.test(raw)) return raw + "00";
+  // Falls zu kurz, mit Nullen auffüllen
+  if (/^[VPK]\d{1,8}$/.test(raw)) {
+    const prefix = raw[0];
+    const num = raw.slice(1).padStart(8, "0");
+    return prefix + num + "0";
+  }
+  return raw;
 }
+
 function formatTimestampForBA(d=new Date()){
   const pad=n=>String(n).padStart(2,"0");
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
@@ -287,7 +296,10 @@ function validate(data){
   if(!data.ba_title_code||!data.ba_bkz||!data.ba_title_label) return{ok:false,msg:"Bitte BA-Beruf auswählen."};
   if(!requireEitherEmailOrUrl(data)) return{ok:false,msg:"Bitte E-Mail ODER Bewerbungs-URL angeben."};
   if(!data.supplier_id||String(data.supplier_id).trim().length!==10) return{ok:false,msg:"Partner-ID muss 10-stellig sein."};
+  if (!/^[VPK]\d{9}$/i.test(data.supplier_id)) return { ok: false, msg: "Partner-ID muss mit V, P oder K beginnen und insgesamt 10 Zeichen (1 Buchstabe + 9 Ziffern) haben." };
   return{ok:true};
+
+  
 }
 $("#supplier_id")?.addEventListener("input",updateFilenamePreview);
 updateFilenamePreview();
@@ -351,6 +363,10 @@ async function batchUpload(n){
 
 /* ========= CMS-Listenlogik ========= */
 const $cmsBody=$("#cms-tbody");
+const $searchInput = $("#search-input");
+const $statusFilter = $("#status-filter");
+const $flagFilter = $("#filter-transfer");
+
 const $selectAll=$("#select-all");
 const $uploadSelected=$("#btn-upload-selected");
 const $deleteSelected=$("#btn-delete-selected");
@@ -367,6 +383,41 @@ async function ensureCmsListLoaded(){
   try{await loadList({silent:true,preserveNotice:true});}
   catch(error){logError("ensureCmsListLoaded",error);}
 }
+
+function applyCmsFilters() {
+  let filtered = [...cmsItems];
+
+  // 🔍 Textsuche (Titel oder Ort)
+  const query = ($searchInput?.value || "").trim().toLowerCase();
+  if (query) {
+    filtered = filtered.filter(item =>
+      (item.job_title || "").toLowerCase().includes(query) ||
+      (item.location_city || "").toLowerCase().includes(query)
+    );
+  }
+
+  // 🏷️ Statusfilter
+  const status = $statusFilter?.value || "alle";
+  if (status !== "alle") {
+    filtered = filtered.filter(item =>
+      (item.ba_status || "").toLowerCase() === status.toLowerCase()
+    );
+  }
+
+  // 🚩 Transfer-Flag-Filter
+  if ($flagFilter?.checked) {
+    filtered = filtered.filter(item => item.transfer_flag === true);
+  }
+
+  // Tabelle neu rendern
+  renderCmsTable(filtered);
+  updateSelectionButtons();
+}
+
+$searchInput?.addEventListener("input", applyCmsFilters);
+$statusFilter?.addEventListener("change", applyCmsFilters);
+$flagFilter?.addEventListener("change", applyCmsFilters);
+
 
 function renderCmsTable(items){
   if(!$cmsBody) return;
@@ -462,7 +513,7 @@ async function loadList(options={}){
 
 /* ========= Partner-ID Ermittlung ========= */
 function resolvePartnerIdFromJobsOrForm(jobs) {
-  const valid = id => /^[VPK]\d{9}$/.test(id);
+  const valid = id => /^[VPK]\d{9}$/i.test(id);
   const norm  = v => padPartnerId10(String(v || "").trim());
 
   const jobIds = (jobs || [])
