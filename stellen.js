@@ -1,4 +1,3 @@
-<script>
 /* ========= Konfiguration ========= */
 const WH_SAVE             = "https://hook.eu2.make.com/krje3ftzgbomitzs8ca8a5f5mc5c5bhf";
 const WH_LIST             = "https://hook.eu2.make.com/1thp5v89ydmjmr6oaz9zfea0h5alnpky";
@@ -254,5 +253,3 @@ $refresh?.addEventListener("click",loadList);
 
 /* ========= Init ========= */
 loadList();
-
-</script>
