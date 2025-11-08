@@ -86,6 +86,19 @@
     return `${prefix}${digits.padEnd(9, "0")}`;
   }
 
+  function normalizeTransferFlag(value) {
+    if (value === true || value === false) return value;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (!normalized) return false;
+      if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+      if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+    }
+    if (typeof value === "number") return value === 1;
+    if (value == null) return false;
+    return Boolean(value);
+  }
+
   function formatTimestampForBA(date = new Date()) {
     const pad = value => String(value).padStart(2, "0");
     return [
@@ -518,7 +531,10 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json();
         if (!payload || !Array.isArray(payload.items)) throw new Error("Ungültige Antwort vom Server");
-        state.cmsItems = payload.items;
+        state.cmsItems = payload.items.map(item => ({
+          ...item,
+          transfer_flag: normalizeTransferFlag(item?.transfer_flag)
+        }));
         rebuildCmsIndexes();
         const validIds = new Set(state.cmsItems.map(item => normalizeId(item.id)));
         state.selection = new Set(Array.from(state.selection).filter(id => validIds.has(id)));
