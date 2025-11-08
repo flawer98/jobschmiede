@@ -41,7 +41,7 @@ async function postHook(url, payload) {
 }
 
 function toggleDisabled(disabled) {
-  ["save","upload-now","batch-10","batch-20"].forEach(id => {
+  ["save","upload-now"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = disabled;
   });
@@ -221,22 +221,6 @@ $("#upload-now").addEventListener("click", async () => {
     toggleDisabled(false);
   }
 });
-
-$("#batch-10").addEventListener("click", () => batchUpload(10));
-$("#batch-20").addEventListener("click", () => batchUpload(20));
-
-async function batchUpload(n) {
-  setNotice(`Batch-Upload (${n}) gestartet …`);
-  toggleDisabled(true);
-  try {
-    const resp = await postHook(WH_UPLOAD_LAST, { limit: n });
-    setNotice(resp, "ok");
-  } catch (err) {
-    setNotice("Fehler beim Batch-Upload.", "error");
-  } finally {
-    toggleDisabled(false);
-  }
-}
 
 
 
