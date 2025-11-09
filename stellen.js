@@ -730,9 +730,9 @@
           `<td><span class=\"ba-chip ${statusClass}\">${escapeXML(statusLabel)}</span></td>` +
           `<td class=\"ba-table__actions\">` +
           `<div class=\"ba-table__action-group\">` +
-          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-edit-item\" data-id=\"${escapeXML(id)}\" ${actionDisabled}>Bearbeiten</button>` +
-          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-delete-item\" data-id=\"${escapeXML(id)}\" ${actionDisabled}>Löschen</button>` +
-          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-upload-single\" data-id=\"${escapeXML(id)}\" ${uploadDisabled}>Upload</button>` +
+          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-edit-item\" data-id=\"${escapeXML(id)}\" ${actionDisabled}>Bearbeiten
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pencil-icon lucide-pencil"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
+          </button>` +
           `</div>` +
           `</td>` +
           `</tr>`
@@ -1123,35 +1123,6 @@
         return;
       }
 
-      const deleteButton = event.target.closest(".js-delete-item");
-      if (deleteButton) {
-        const id = normalizeId(deleteButton.dataset.id);
-        if (!id) return;
-        const job = state.cmsItems.find(item => normalizeId(item.id) === id);
-        if (!job) return;
-        const confirmDelete = window.confirm(
-          `Soll die Stelle "${job.job_title ?? id}" wirklich im BA-CMS gelöscht werden?`
-        );
-        if (!confirmDelete) return;
-        state.selection.delete(id);
-        if (state.editingId && state.editingId === id) exitEditMode({ resetForm: true });
-        await sendToMake("DELETE", [job]);
-        await loadList({ silent: true, preserveNotice: true });
-        return;
-      }
-
-      const button = event.target.closest(".js-upload-single");
-      if (!button) return;
-      const id = normalizeId(button.dataset.id);
-      if (!id) return;
-      const job = state.cmsItems.find(item => normalizeId(item.id) === id);
-      if (!job) return;
-      if (isStatusOk(job.ba_status)) {
-        setNotice("Bereits gesendet – übersprungen", "warn");
-        return;
-      }
-      await sendToMake("INSERT", [job]);
-    });
 
     dom.uploadSelected?.addEventListener("click", async () => {
       const jobs = getSelectedJobs(job => !isStatusOk(job.ba_status));
