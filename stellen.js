@@ -124,14 +124,43 @@
       .replace(/'/g, "&apos;");
   }
 
+  const NOTICE_TIMEOUT_DEFAULT = 6000;
+  const NOTICE_TIMEOUT_ERROR = 9000;
+  let noticeHideTimer = null;
+
   function setNotice(text, type = "info") {
     if (!dom.notice) return;
-    const message = typeof text === "string" ? text : text != null ? JSON.stringify(text, null, 2) : "";
-    dom.notice.textContent = message;
-    dom.notice.classList.remove("ba-notice--ok", "ba-notice--warn", "ba-notice--error");
-    if (type === "ok") dom.notice.classList.add("ba-notice--ok");
-    if (type === "warn") dom.notice.classList.add("ba-notice--warn");
-    if (type === "error") dom.notice.classList.add("ba-notice--error");
+    const message =
+      typeof text === "string"
+        ? text
+        : text != null
+        ? JSON.stringify(text, null, 2)
+        : "";
+
+    dom.notice.textContent = message || "\u00a0";
+    dom.notice.className = "ba-toast";
+    if (type === "ok") dom.notice.classList.add("ba-toast--ok");
+    if (type === "warn") dom.notice.classList.add("ba-toast--warn");
+    if (type === "error") dom.notice.classList.add("ba-toast--error");
+
+    const role = type === "error" ? "alert" : "status";
+    if (dom.notice.getAttribute("role") !== role) {
+      dom.notice.setAttribute("role", role);
+    }
+
+    dom.notice.classList.remove("is-visible");
+    dom.notice.removeAttribute("aria-hidden");
+
+    requestAnimationFrame(() => {
+      dom.notice.classList.add("is-visible");
+    });
+
+    clearTimeout(noticeHideTimer);
+    const timeout = type === "error" ? NOTICE_TIMEOUT_ERROR : NOTICE_TIMEOUT_DEFAULT;
+    noticeHideTimer = window.setTimeout(() => {
+      dom.notice.classList.remove("is-visible");
+      dom.notice.setAttribute("aria-hidden", "true");
+    }, timeout);
   }
 
   function toggleDisabled(disabled) {
