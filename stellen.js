@@ -5,7 +5,7 @@
   /* ========= Konfiguration ========= */
   const WEBHOOKS = {
     save: "https://hook.eu2.make.com/krje3ftzgbomitzs8ca8a5f5mc5c5bhf",
-    update: "https://hook.eu2.make.com/update-cms-item",
+    update: "https://hook.eu2.make.com/xt227w6rcr9ef4psrka4c3ocrqypbnji",
     uploadSingle: "https://hook.integromat.com/yyyyy",
     uploadBatch: "https://hook.integromat.com/zzzzz",
     list: "https://hook.eu2.make.com/1thp5v89ydmjmr6oaz9zfea0h5alnpky",
@@ -294,11 +294,10 @@
     delete normalized.location_city;
     if (city) {
       const cityClean = normalizeWhitespace(city);
-      if (!cityClean || (employment && normalizeComparable(cityClean) === normalizeComparable(employment))) {
-        delete normalized.location_city;
-      } else {
-        normalized.location_city = cityClean;
-      }
+    if (cityClean) {
+      normalized.location_city = cityClean;
+    }
+
     }
     const postcode = coalesceText(item.location_postcode, item.postcode, item.zip, item.plz);
     if (postcode) normalized.location_postcode = postcode;
@@ -715,12 +714,8 @@
             normalized.location_city_name
           )
         );
-        const employmentLabel = normalizeWhitespace(normalized.employment_type ?? "");
-        const city = rawCity && employmentLabel
-          ? normalizeComparable(rawCity) === normalizeComparable(employmentLabel)
-            ? ""
-            : rawCity
-          : rawCity;
+        const city = rawCity;
+
         const location = [postcode, city].filter(Boolean).join(" ") || "-";
         const transferLabel = normalized.transfer_flag ? "Ja" : "Nein";
         return (
