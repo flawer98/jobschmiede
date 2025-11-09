@@ -723,7 +723,6 @@
         return (
           `<tr>` +
           `<td><input type=\"checkbox\" class=\"row-check\" data-id=\"${escapeXML(id)}\" ${checked} ${checkboxDisabled}></td>` +
-          `<td class=\"ba-table__id\">${idMarkup}</td>` +
           `<td>${escapeXML(title)}</td>` +
           `<td>${escapeXML(location)}</td>` +
           `<td class=\"ba-table__when\">${escapeXML(updated)}</td>` +
