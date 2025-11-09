@@ -5,15 +5,16 @@
   /* ========= Konfiguration ========= */
   const WEBHOOKS = {
     save: "https://hook.eu2.make.com/krje3ftzgbomitzs8ca8a5f5mc5c5bhf",
-    update: "https://hook.eu2.make.com/update-cms-item",
+    update: "https://hook.eu2.make.com/xt227w6rcr9ef4psrka4c3ocrqypbnji",
     uploadSingle: "https://hook.integromat.com/yyyyy",
     uploadBatch: "https://hook.integromat.com/zzzzz",
     list: "https://hook.eu2.make.com/1thp5v89ydmjmr6oaz9zfea0h5alnpky",
     uploadSelected: "https://hook.integromat.com/BBBBB",
-    deleteSelected: "https://hook.integromat.com/DDDDD"
+    deleteSelected: "https://hook.eu2.make.com/hfo3zsmpanmrxv47zzrox7ye1h87ncp3"
   };
 
   const JSON_URL = "https://raw.githubusercontent.com/flawer98/jobschmiede/main/ba_jobs.json";
+  const BA_STATUS_DRAFT = "Noch nicht an BA übertragen";
 
   /* ========= DOM Helpers ========= */
   const $ = (selector, scope = document) => scope.querySelector(selector);
@@ -205,6 +206,78 @@
     return Boolean(value);
   }
 
+  function coalesceText(...values) {
+    for (const value of values) {
+      if (value == null) continue;
+      const text = String(value).trim();
+      if (text) return text;
+    }
+    return "";
+  }
+
+  function coalesceDate(...values) {
+    for (const value of values) {
+      if (!value) continue;
+      const date = value instanceof Date ? value : new Date(value);
+      if (!Number.isNaN(date.getTime())) return date;
+    }
+    return null;
+  }
+
+  function formatDateTime(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return "-";
+    return (
+      date.toLocaleDateString("de-DE") +
+      " " +
+      date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+    );
+  }
+
+  function normalizeBaStatus(value) {
+    const trimmed = normalizeWhitespace(value);
+    if (!trimmed) return BA_STATUS_DRAFT;
+    const key = normalizeComparable(trimmed);
+    if (["pending", "neu", "new", "waiting", "wartend", "draft"].includes(key)) {
+      return BA_STATUS_DRAFT;
+    }
+    if (["ok", "success", "done", "sent"].includes(key)) return "OK";
+    if (["error", "failed", "fail"].includes(key)) return "ERROR";
+    return trimmed;
+  }
+
+  function statusKey(value) {
+    return normalizeComparable(normalizeBaStatus(value));
+  }
+
+  function isStatusOk(value) {
+    return statusKey(value) === "ok";
+  }
+
+  function isStatusError(value) {
+    return statusKey(value) === "error";
+  }
+
+  function normalizeCmsItem(item = {}) {
+    const normalized = { ...item };
+    const id = normalizeId(item.id ?? item.cms_item_id ?? item._id);
+    if (id) normalized.id = id;
+    else delete normalized.id;
+    const title = coalesceText(item.job_title, item.Name, item.name, item.title);
+    normalized.job_title = title;
+    const city = coalesceText(item.location_city, item.city, item.location_city_name, item.location);
+    if (city) normalized.location_city = city;
+    const postcode = coalesceText(item.location_postcode, item.postcode, item.zip, item.plz);
+    if (postcode) normalized.location_postcode = postcode;
+    normalized.transfer_flag = normalizeTransferFlag(item.transfer_flag);
+    normalized.ba_status = normalizeBaStatus(item.ba_status);
+    const validFrom = coalesceText(item.valid_from, item.validFrom);
+    if (validFrom) normalized.valid_from = validFrom;
+    const validTo = coalesceText(item.valid_to, item.validTo);
+    if (validTo) normalized.valid_to = validTo;
+    return normalized;
+  }
+
   function formatTimestampForBA(date = new Date()) {
     const pad = value => String(value).padStart(2, "0");
     return [
@@ -355,10 +428,11 @@
 
   function registerCmsItem(item) {
     if (!item) return;
-    const id = normalizeId(item.id);
-    if (id) state.cmsIdIndex.set(id, item);
-    const key = buildCmsKey(item);
-    if (key) state.cmsKeyIndex.set(key, item);
+    const normalized = normalizeCmsItem(item);
+    const id = normalizeId(normalized.id);
+    if (id) state.cmsIdIndex.set(id, normalized);
+    const key = buildCmsKey(normalized);
+    if (key) state.cmsKeyIndex.set(key, normalized);
   }
 
   function findCmsItemMatchByName(data, { excludeId } = {}) {
@@ -567,36 +641,55 @@
     const selection = state.selection;
     dom.cmsBody.innerHTML = items
       .map(item => {
-        const id = normalizeId(item.id);
+        const normalized = normalizeCmsItem(item);
+        const id = normalizeId(normalized.id);
         const checked = selection.has(id) ? "checked" : "";
-        const disabled = item.ba_status === "OK" ? "disabled" : "";
+        const sent = isStatusOk(normalized.ba_status);
+        const checkboxDisabled = !id || sent ? "disabled" : "";
+        const uploadDisabled = !id || sent ? "disabled" : "";
         const actionDisabled = id ? "" : "disabled";
-        const statusClass =
-          item.ba_status === "OK"
-            ? "ba-chip--ok"
-            : item.ba_status === "ERROR"
-            ? "ba-chip--error"
-            : "ba-chip--wait";
-        const updated = item.updated_on
-          ? new Date(item.updated_on).toLocaleDateString("de-DE") +
-            " " +
-            new Date(item.updated_on).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
-          : "-";
+        const statusLabel = normalizeBaStatus(normalized.ba_status);
+        const statusClass = sent ? "ba-chip--ok" : isStatusError(normalized.ba_status) ? "ba-chip--error" : "ba-chip--wait";
+        const updatedDate = coalesceDate(
+          normalized.last_updated,
+          normalized.updated_on,
+          normalized.updatedAt,
+          normalized.updated_at,
+          normalized.last_published,
+          normalized.created_on,
+          normalized.createdAt
+        );
+        const updated = updatedDate ? formatDateTime(updatedDate) : "-";
         const idMarkup = id ? `<code>${escapeXML(id)}</code>` : "-";
+        const title = normalizeWhitespace(normalized.job_title) || "-";
+        const postcode = coalesceText(
+          normalized.location_postcode,
+          normalized.postcode,
+          normalized.zip,
+          normalized.plz
+        );
+        const city = coalesceText(
+          normalized.location_city,
+          normalized.city,
+          normalized.location_city_name,
+          normalized.location
+        );
+        const location = [postcode, city].filter(Boolean).join(" ") || "-";
+        const transferLabel = normalized.transfer_flag ? "Ja" : "Nein";
         return (
           `<tr>` +
-          `<td><input type=\"checkbox\" class=\"row-check\" data-id=\"${escapeXML(id)}\" ${checked} ${disabled}></td>` +
+          `<td><input type=\"checkbox\" class=\"row-check\" data-id=\"${escapeXML(id)}\" ${checked} ${checkboxDisabled}></td>` +
           `<td class=\"ba-table__id\">${idMarkup}</td>` +
-          `<td>${escapeXML(item.job_title ?? "-")}</td>` +
-          `<td>${escapeXML(item.location_city ?? "-")}</td>` +
-          `<td><small>${escapeXML(updated)}</small></td>` +
-          `<td>${item.transfer_flag ? "<span class='ba-chip'>true</span>" : "<span class='ba-chip'>false</span>"}</td>` +
-          `<td><span class=\"ba-chip ${statusClass}\">${escapeXML(item.ba_status ?? "-")}</span></td>` +
+          `<td>${escapeXML(title)}</td>` +
+          `<td>${escapeXML(location)}</td>` +
+          `<td class=\"ba-table__when\">${escapeXML(updated)}</td>` +
+          `<td><span class='ba-chip'>${escapeXML(transferLabel)}</span></td>` +
+          `<td><span class=\"ba-chip ${statusClass}\">${escapeXML(statusLabel)}</span></td>` +
           `<td class=\"ba-table__actions\">` +
           `<div class=\"ba-table__action-group\">` +
           `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-edit-item\" data-id=\"${escapeXML(id)}\" ${actionDisabled}>Bearbeiten</button>` +
           `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-delete-item\" data-id=\"${escapeXML(id)}\" ${actionDisabled}>Löschen</button>` +
-          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-upload-single\" data-id=\"${escapeXML(id)}\" ${disabled}>Upload</button>` +
+          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-upload-single\" data-id=\"${escapeXML(id)}\" ${uploadDisabled}>Upload</button>` +
           `</div>` +
           `</td>` +
           `</tr>`
@@ -657,7 +750,7 @@
     let selectable = 0;
     let checked = 0;
     items.forEach(item => {
-      if (item.ba_status === "OK") return;
+      if (isStatusOk(item.ba_status)) return;
       selectable += 1;
       if (state.selection.has(normalizeId(item.id))) checked += 1;
     });
@@ -690,16 +783,19 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json();
         if (!payload || !Array.isArray(payload.items)) throw new Error("Ungültige Antwort vom Server");
-        state.cmsItems = payload.items.map(item => ({
-          ...item,
-          transfer_flag: normalizeTransferFlag(item?.transfer_flag)
-        }));
+        state.cmsItems = payload.items.map(item => normalizeCmsItem(item));
         rebuildCmsIndexes();
         if (state.editingId && !state.cmsIdIndex.has(state.editingId)) {
           exitEditMode({ resetForm: true });
         }
         const validIds = new Set(state.cmsItems.map(item => normalizeId(item.id)));
-        state.selection = new Set(Array.from(state.selection).filter(id => validIds.has(id)));
+        state.selection = new Set(
+          Array.from(state.selection).filter(id => {
+            if (!validIds.has(id)) return false;
+            const entry = state.cmsIdIndex.get(id);
+            return entry ? !isStatusOk(entry.ba_status) : true;
+          })
+        );
         applyCmsFilters();
         if (!silent && !preserveNotice) setNotice(`Es wurden ${state.cmsItems.length} Einträge geladen.`, "ok");
       } catch (error) {
@@ -858,6 +954,11 @@
         setNotice(validation.msg, "warn");
         return;
       }
+      let previousStatus = "";
+      if (currentId) {
+        const existing = state.cmsIdIndex.get(currentId);
+        previousStatus = existing?.ba_status ?? "";
+      }
       if (isUpdate) {
         if (!currentId) {
           setNotice("Kein CMS-Item zum Aktualisieren ausgewählt.", "warn");
@@ -865,8 +966,10 @@
         }
         data.id = currentId;
         applyExistingExternalId(data);
+        data.ba_status = normalizeBaStatus(data.ba_status || previousStatus);
       } else {
         delete data.cms_item_id;
+        data.ba_status = normalizeBaStatus(data.ba_status || previousStatus);
       }
       const hook = isUpdate ? WEBHOOKS.update : WEBHOOKS.save;
       if (!hook) {
@@ -997,7 +1100,7 @@
       if (!id) return;
       const job = state.cmsItems.find(item => normalizeId(item.id) === id);
       if (!job) return;
-      if (job.ba_status === "OK") {
+      if (isStatusOk(job.ba_status)) {
         setNotice("Bereits gesendet – übersprungen", "warn");
         return;
       }
@@ -1005,7 +1108,7 @@
     });
 
     dom.uploadSelected?.addEventListener("click", async () => {
-      const jobs = getSelectedJobs(job => job.ba_status !== "OK");
+      const jobs = getSelectedJobs(job => !isStatusOk(job.ba_status));
       if (!jobs.length) {
         setNotice("Alle ausgewählten Stellen wurden bereits gesendet.", "warn");
         return;
@@ -1032,7 +1135,7 @@
       const items = getRenderableList();
       if (event.target.checked) {
         items.forEach(item => {
-          if (item.ba_status !== "OK") state.selection.add(normalizeId(item.id));
+          if (!isStatusOk(item.ba_status)) state.selection.add(normalizeId(item.id));
         });
       } else {
         state.selection.clear();
