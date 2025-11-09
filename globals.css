@@ -29,6 +29,10 @@
   box-sizing: border-box;
 }
 
+.is-hidden {
+  display: none !important;
+}
+
 .ba-shell {
   max-width: 1080px;
   margin: 0 auto;
@@ -120,6 +124,10 @@ fieldset.ba-section legend {
 
 .ba-field--full {
   grid-column: 1 / -1;
+}
+
+.ba-field--compact {
+  max-width: 320px;
 }
 
 .ba-label {
@@ -432,8 +440,26 @@ fieldset.ba-section legend {
   width: 44px;
 }
 
+.ba-table__id {
+  font-family: "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .ba-table__actions {
-  width: 140px;
+  width: 260px;
+}
+
+.ba-table__action-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.ba-table__action-group .ba-btn {
+  flex: 1 1 80px;
+  min-width: 86px;
 }
 
 .ba-list-actions {

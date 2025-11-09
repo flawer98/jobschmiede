@@ -181,6 +181,18 @@
               <span>Für Übertragung an BA vormerken</span>
             </label>
 
+            <div class="ba-field ba-field--compact">
+              <label class="ba-label" for="cms_item_id">CMS Item ID</label>
+              <input
+                id="cms_item_id"
+                name="cms_item_id"
+                class="ba-input ba-input--readonly"
+                type="text"
+                readonly
+                placeholder="–"
+              />
+            </div>
+
             <!-- interne IDs -->
             <input id="external_id" name="external_id" type="hidden" />
           </div>
@@ -189,6 +201,8 @@
         <!-- Aktionen -->
         <div class="ba-actions">
           <button type="submit" class="ba-btn ba-btn--primary" id="save">Speichern</button>
+          <button type="submit" class="ba-btn ba-btn--primary is-hidden" id="update">Aktualisieren</button>
+          <button type="button" class="ba-btn ba-btn--ghost is-hidden" id="cancel-edit">Abbrechen</button>
           <button type="button" class="ba-btn" id="upload-now">Jetzt an BA übertragen</button>
           <div class="ba-spacer"></div>
         </div>
@@ -220,6 +234,7 @@
             <thead>
               <tr>
                 <th class="ba-table__checkbox"><input type="checkbox" id="select-all" /></th>
+                <th>CMS Item ID</th>
                 <th>Titel</th>
                 <th>Ort</th>
                 <th>Updated</th>
@@ -229,7 +244,7 @@
               </tr>
             </thead>
             <tbody id="cms-tbody">
-              <tr><td colspan="7">Noch keine Daten.</td></tr>
+              <tr><td colspan="8">Noch keine Daten.</td></tr>
             </tbody>
           </table>
         </div>

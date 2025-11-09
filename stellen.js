@@ -5,6 +5,7 @@
   /* ========= Konfiguration ========= */
   const WEBHOOKS = {
     save: "https://hook.eu2.make.com/krje3ftzgbomitzs8ca8a5f5mc5c5bhf",
+    update: "https://hook.eu2.make.com/update-cms-item",
     uploadSingle: "https://hook.integromat.com/yyyyy",
     uploadBatch: "https://hook.integromat.com/zzzzz",
     list: "https://hook.eu2.make.com/1thp5v89ydmjmr6oaz9zfea0h5alnpky",
@@ -23,9 +24,12 @@
     form: $("#job-form"),
     supplierId: $("#supplier_id"),
     filenamePreview: $("#filename_preview"),
+    cmsItemId: $("#cms_item_id"),
     externalId: $("#external_id"),
     transferFlag: $("#transfer_flag"),
     save: $("#save"),
+    update: $("#update"),
+    cancelEdit: $("#cancel-edit"),
     uploadNow: $("#upload-now"),
     batch10: $("#batch-10"),
     batch20: $("#batch-20"),
@@ -56,12 +60,114 @@
     cmsIdIndex: new Map(),
     cmsKeyIndex: new Map(),
     listLoadingPromise: null,
-    isSaving: false
+    isSaving: false,
+    editingId: ""
   };
 
   /* ========= Utility Funktionen ========= */
   function logError(context, error) {
     console.error(`[${context}]`, error);
+  }
+
+  const FORM_FIELD_NAMES = [
+    "job_title",
+    "employment_type",
+    "working_hours",
+    "valid_from",
+    "valid_to",
+    "description_rich",
+    "location_street",
+    "location_postcode",
+    "location_city",
+    "location_country",
+    "application_email",
+    "application_url",
+    "contact_name",
+    "contact_email",
+    "contact_phone",
+    "ba_title_label",
+    "ba_bkz",
+    "ba_title_code",
+    "company_name",
+    "company_website",
+    "supplier_id"
+  ];
+
+  function fillFormFromItem(item = {}) {
+    if (!dom.form) return;
+    FORM_FIELD_NAMES.forEach(name => {
+      const field = dom.form.elements.namedItem(name);
+      if (!field) return;
+      const value = item[name];
+      if (field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement) {
+        if (field.type === "checkbox") {
+          field.checked = normalizeTransferFlag(value);
+        } else if (field.type === "number") {
+          field.value = value ?? "";
+        } else {
+          field.value = value ?? "";
+        }
+      }
+    });
+    if (dom.transferFlag) dom.transferFlag.checked = normalizeTransferFlag(item.transfer_flag);
+    const cmsId = normalizeId(item.id);
+    if (dom.cmsItemId) dom.cmsItemId.value = cmsId;
+    const externalId = normalizeId(item.external_id ?? item.id);
+    if (dom.externalId) dom.externalId.value = externalId;
+    if (dom.jobSearch) {
+      const label = item.ba_title_label ?? "";
+      const bkz = item.ba_bkz ?? "";
+      dom.jobSearch.value = label && bkz ? `${label} (${bkz})` : label || bkz || "";
+    }
+    updateFilenamePreview({ preferValue: item.supplier_id });
+  }
+
+  function setFormMode(mode) {
+    if (!dom.form) return;
+    if (mode === "edit") {
+      dom.form.dataset.mode = "edit";
+      state.editingId = normalizeId(dom.cmsItemId?.value);
+      dom.save?.classList.add("is-hidden");
+      dom.update?.classList.remove("is-hidden");
+      dom.cancelEdit?.classList.remove("is-hidden");
+    } else {
+      delete dom.form.dataset.mode;
+      state.editingId = "";
+      dom.save?.classList.remove("is-hidden");
+      dom.update?.classList.add("is-hidden");
+      dom.cancelEdit?.classList.add("is-hidden");
+    }
+  }
+
+  function enterEditMode(item) {
+    if (!item || !dom.form) return;
+    fillFormFromItem(item);
+    setFormMode("edit");
+    const focusTarget = dom.form.elements.namedItem("job_title");
+    if (focusTarget instanceof HTMLElement) {
+      requestAnimationFrame(() => focusTarget.focus());
+    }
+    if (typeof dom.form.scrollIntoView === "function") {
+      dom.form.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    setNotice(`Bearbeite "${item.job_title ?? "Eintrag"}". Änderungen mit "Aktualisieren" speichern.`, "warn");
+  }
+
+  function resetFormValues() {
+    if (!dom.form) return;
+    dom.form.reset();
+    if (dom.jobSearch) dom.jobSearch.value = "";
+    if (dom.cmsItemId) dom.cmsItemId.value = "";
+    if (dom.externalId) dom.externalId.value = "";
+    if (dom.transferFlag) dom.transferFlag.checked = false;
+  }
+
+  function exitEditMode({ resetForm = false } = {}) {
+    setFormMode("create");
+    if (resetForm) {
+      resetFormValues();
+      updateFilenamePreview();
+    }
   }
 
   function normalizeId(value) {
@@ -164,7 +270,7 @@
   }
 
   function toggleDisabled(disabled) {
-    ["save", "upload-now", "batch-10", "batch-20", "btn-upload-selected", "btn-delete-selected"].forEach(id => {
+    ["save", "update", "upload-now", "batch-10", "batch-20", "btn-upload-selected", "btn-delete-selected"].forEach(id => {
       const element = document.getElementById(id);
       if (element) element.disabled = disabled;
     });
@@ -255,11 +361,14 @@
     if (key) state.cmsKeyIndex.set(key, item);
   }
 
-  function findCmsItemMatchByName(data) {
+  function findCmsItemMatchByName(data, { excludeId } = {}) {
     if (!state.cmsItems.length || !data) return null;
     const key = buildCmsKey(data);
     if (!key) return null;
-    return state.cmsKeyIndex.get(key) ?? null;
+    const match = state.cmsKeyIndex.get(key) ?? null;
+    if (!match) return null;
+    if (excludeId && normalizeId(match.id) === normalizeId(excludeId)) return null;
+    return match;
   }
 
   function requireEitherEmailOrUrl(data) {
@@ -279,6 +388,12 @@
     });
     data.transfer_flag = dom.transferFlag?.checked ?? false;
     if (data.working_hours) data.working_hours = Number(data.working_hours);
+    const cmsId = normalizeId(data.cms_item_id);
+    if (cmsId) data.cms_item_id = cmsId;
+    else delete data.cms_item_id;
+    const externalId = normalizeId(data.external_id);
+    if (externalId) data.external_id = externalId;
+    else delete data.external_id;
     return data;
   }
 
@@ -307,11 +422,13 @@
 
   function applyExistingExternalId(data) {
     const fromForm = normalizeId(dom.externalId?.value);
-    const existing = normalizeId(data.external_id || data.id || fromForm);
+    const fromCms = normalizeId(dom.cmsItemId?.value);
+    const existing = normalizeId(data.external_id || data.id || fromForm || fromCms);
     if (existing) {
       data.external_id = existing;
       data.id = existing;
       if (dom.externalId) dom.externalId.value = existing;
+      if (dom.cmsItemId) dom.cmsItemId.value = existing;
     }
   }
 
@@ -340,6 +457,10 @@
   }
 
   function ensurePartnerIdMatchesSelection() {
+    if (state.editingId) {
+      updateFilenamePreview();
+      return;
+    }
     const jobs = getSelectedJobs();
     if (!jobs.length) {
       updateFilenamePreview();
@@ -439,7 +560,7 @@
   function renderCmsTable(items) {
     if (!dom.cmsBody) return;
     if (!items.length) {
-      dom.cmsBody.innerHTML = "<tr><td colspan='7'>Keine Einträge gefunden.</td></tr>";
+      dom.cmsBody.innerHTML = "<tr><td colspan='8'>Keine Einträge gefunden.</td></tr>";
       syncSelectionUI();
       return;
     }
@@ -449,6 +570,7 @@
         const id = normalizeId(item.id);
         const checked = selection.has(id) ? "checked" : "";
         const disabled = item.ba_status === "OK" ? "disabled" : "";
+        const actionDisabled = id ? "" : "disabled";
         const statusClass =
           item.ba_status === "OK"
             ? "ba-chip--ok"
@@ -460,15 +582,23 @@
             " " +
             new Date(item.updated_on).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
           : "-";
+        const idMarkup = id ? `<code>${escapeXML(id)}</code>` : "-";
         return (
           `<tr>` +
           `<td><input type=\"checkbox\" class=\"row-check\" data-id=\"${escapeXML(id)}\" ${checked} ${disabled}></td>` +
+          `<td class=\"ba-table__id\">${idMarkup}</td>` +
           `<td>${escapeXML(item.job_title ?? "-")}</td>` +
           `<td>${escapeXML(item.location_city ?? "-")}</td>` +
           `<td><small>${escapeXML(updated)}</small></td>` +
           `<td>${item.transfer_flag ? "<span class='ba-chip'>true</span>" : "<span class='ba-chip'>false</span>"}</td>` +
           `<td><span class=\"ba-chip ${statusClass}\">${escapeXML(item.ba_status ?? "-")}</span></td>` +
-          `<td><button type=\"button\" class=\"ba-btn ba-btn--ghost js-upload-single\" data-id=\"${escapeXML(id)}\" ${disabled}>Upload</button></td>` +
+          `<td class=\"ba-table__actions\">` +
+          `<div class=\"ba-table__action-group\">` +
+          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-edit-item\" data-id=\"${escapeXML(id)}\" ${actionDisabled}>Bearbeiten</button>` +
+          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-delete-item\" data-id=\"${escapeXML(id)}\" ${actionDisabled}>Löschen</button>` +
+          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-upload-single\" data-id=\"${escapeXML(id)}\" ${disabled}>Upload</button>` +
+          `</div>` +
+          `</td>` +
           `</tr>`
         );
       })
@@ -565,6 +695,9 @@
           transfer_flag: normalizeTransferFlag(item?.transfer_flag)
         }));
         rebuildCmsIndexes();
+        if (state.editingId && !state.cmsIdIndex.has(state.editingId)) {
+          exitEditMode({ resetForm: true });
+        }
         const validIds = new Set(state.cmsItems.map(item => normalizeId(item.id)));
         state.selection = new Set(Array.from(state.selection).filter(id => validIds.has(id)));
         applyCmsFilters();
@@ -707,9 +840,12 @@
     dom.form.addEventListener("submit", async event => {
       event.preventDefault();
       if (state.isSaving) return;
+      const submitterId = event.submitter?.id ?? "";
+      const isUpdate = submitterId === "update" || dom.form.dataset.mode === "edit";
       await ensureCmsListLoaded();
       const data = serializeForm(dom.form);
-      const duplicate = findCmsItemMatchByName(data);
+      const currentId = normalizeId(data.cms_item_id || state.editingId);
+      const duplicate = findCmsItemMatchByName(data, { excludeId: isUpdate ? currentId : "" });
       if (duplicate) {
         setNotice(
           `Ein Job mit dem Titel "${data.job_title}" in "${data.location_city}" existiert bereits. Bitte Titel oder Ort anpassen.`,
@@ -722,30 +858,60 @@
         setNotice(validation.msg, "warn");
         return;
       }
-      setNotice("Speichern …");
+      if (isUpdate) {
+        if (!currentId) {
+          setNotice("Kein CMS-Item zum Aktualisieren ausgewählt.", "warn");
+          return;
+        }
+        data.id = currentId;
+        applyExistingExternalId(data);
+      } else {
+        delete data.cms_item_id;
+      }
+      const hook = isUpdate ? WEBHOOKS.update : WEBHOOKS.save;
+      if (!hook) {
+        setNotice("Kein passender Hook konfiguriert.", "error");
+        return;
+      }
+      setNotice(isUpdate ? "Aktualisiere …" : "Speichern …");
       toggleDisabled(true);
       try {
         state.isSaving = true;
-        const response = await postHook(WEBHOOKS.save, { item: data });
-        setNotice(response ?? "Gespeichert", "ok");
-        const newId = extractItemId(response);
-        if (newId) {
-          if (dom.externalId) dom.externalId.value = newId;
-          data.external_id = newId;
-          data.id = newId;
+        const response = await postHook(hook, { item: data });
+        const successPayload = response ?? (isUpdate ? "Aktualisiert" : "Gespeichert");
+        setNotice(successPayload, "ok");
+        let resultingId = extractItemId(response);
+        if (!resultingId && isUpdate) resultingId = currentId;
+        if (resultingId) {
+          if (dom.externalId) dom.externalId.value = resultingId;
+          if (dom.cmsItemId) dom.cmsItemId.value = resultingId;
+          data.external_id = resultingId;
+          data.id = resultingId;
         }
         await loadList({ silent: true, preserveNotice: true });
-        if (newId) {
-          const refreshed = state.cmsIdIndex.get(newId) ?? data;
+        if (!isUpdate && resultingId) {
+          const refreshed = state.cmsIdIndex.get(resultingId) ?? data;
           registerCmsItem(refreshed);
         }
+        if (isUpdate) {
+          exitEditMode({ resetForm: true });
+        }
       } catch (error) {
-        setNotice(error?.message ? `Fehler beim Speichern (${error.message}).` : "Fehler beim Speichern.", "error");
+        const action = isUpdate ? "Aktualisieren" : "Speichern";
+        setNotice(error?.message ? `Fehler beim ${action} (${error.message}).` : `Fehler beim ${action}.`, "error");
       } finally {
         state.isSaving = false;
         toggleDisabled(false);
         updateFilenamePreview();
       }
+    });
+
+    dom.cancelEdit?.addEventListener("click", () => {
+      if (!state.editingId) return;
+      const confirmCancel = window.confirm("Bearbeitung verwerfen und neues CMS-Item anlegen?");
+      if (!confirmCancel) return;
+      exitEditMode({ resetForm: true });
+      setNotice("Bearbeitungsmodus verlassen.");
     });
 
     dom.uploadNow?.addEventListener("click", async () => {
@@ -778,6 +944,8 @@
     dom.batch20?.addEventListener("click", () => batchUpload(20));
 
     dom.supplierId?.addEventListener("input", () => updateFilenamePreview());
+    setFormMode("create");
+    if (dom.cmsItemId) dom.cmsItemId.value = "";
     updateFilenamePreview();
   }
 
@@ -797,6 +965,32 @@
     });
 
     dom.cmsBody?.addEventListener("click", async event => {
+      const editButton = event.target.closest(".js-edit-item");
+      if (editButton) {
+        const id = normalizeId(editButton.dataset.id);
+        if (!id) return;
+        const job = state.cmsItems.find(item => normalizeId(item.id) === id);
+        if (job) enterEditMode(job);
+        return;
+      }
+
+      const deleteButton = event.target.closest(".js-delete-item");
+      if (deleteButton) {
+        const id = normalizeId(deleteButton.dataset.id);
+        if (!id) return;
+        const job = state.cmsItems.find(item => normalizeId(item.id) === id);
+        if (!job) return;
+        const confirmDelete = window.confirm(
+          `Soll die Stelle "${job.job_title ?? id}" wirklich im BA-CMS gelöscht werden?`
+        );
+        if (!confirmDelete) return;
+        state.selection.delete(id);
+        if (state.editingId && state.editingId === id) exitEditMode({ resetForm: true });
+        await sendToMake("DELETE", [job]);
+        await loadList({ silent: true, preserveNotice: true });
+        return;
+      }
+
       const button = event.target.closest(".js-upload-single");
       if (!button) return;
       const id = normalizeId(button.dataset.id);
