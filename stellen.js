@@ -5,6 +5,7 @@
   /* ========= Konfiguration ========= */
   const WEBHOOKS = {
     save: "https://hook.eu2.make.com/krje3ftzgbomitzs8ca8a5f5mc5c5bhf",
+    update: "https://hook.eu2.make.com/update-cms-item",
     uploadSingle: "https://hook.integromat.com/yyyyy",
     uploadBatch: "https://hook.integromat.com/zzzzz",
     list: "https://hook.eu2.make.com/1thp5v89ydmjmr6oaz9zfea0h5alnpky",
@@ -13,6 +14,7 @@
   };
 
   const JSON_URL = "https://raw.githubusercontent.com/flawer98/jobschmiede/main/ba_jobs.json";
+  const BA_STATUS_DRAFT = "Noch nicht an BA übertragen";
 
   /* ========= DOM Helpers ========= */
   const $ = (selector, scope = document) => scope.querySelector(selector);
@@ -23,9 +25,12 @@
     form: $("#job-form"),
     supplierId: $("#supplier_id"),
     filenamePreview: $("#filename_preview"),
+    cmsItemId: $("#cms_item_id"),
     externalId: $("#external_id"),
     transferFlag: $("#transfer_flag"),
     save: $("#save"),
+    update: $("#update"),
+    cancelEdit: $("#cancel-edit"),
     uploadNow: $("#upload-now"),
     batch10: $("#batch-10"),
     batch20: $("#batch-20"),
@@ -56,12 +61,114 @@
     cmsIdIndex: new Map(),
     cmsKeyIndex: new Map(),
     listLoadingPromise: null,
-    isSaving: false
+    isSaving: false,
+    editingId: ""
   };
 
   /* ========= Utility Funktionen ========= */
   function logError(context, error) {
     console.error(`[${context}]`, error);
+  }
+
+  const FORM_FIELD_NAMES = [
+    "job_title",
+    "employment_type",
+    "working_hours",
+    "valid_from",
+    "valid_to",
+    "description_rich",
+    "location_street",
+    "location_postcode",
+    "location_city",
+    "location_country",
+    "application_email",
+    "application_url",
+    "contact_name",
+    "contact_email",
+    "contact_phone",
+    "ba_title_label",
+    "ba_bkz",
+    "ba_title_code",
+    "company_name",
+    "company_website",
+    "supplier_id"
+  ];
+
+  function fillFormFromItem(item = {}) {
+    if (!dom.form) return;
+    FORM_FIELD_NAMES.forEach(name => {
+      const field = dom.form.elements.namedItem(name);
+      if (!field) return;
+      const value = item[name];
+      if (field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement) {
+        if (field.type === "checkbox") {
+          field.checked = normalizeTransferFlag(value);
+        } else if (field.type === "number") {
+          field.value = value ?? "";
+        } else {
+          field.value = value ?? "";
+        }
+      }
+    });
+    if (dom.transferFlag) dom.transferFlag.checked = normalizeTransferFlag(item.transfer_flag);
+    const cmsId = normalizeId(item.id);
+    if (dom.cmsItemId) dom.cmsItemId.value = cmsId;
+    const externalId = normalizeId(item.external_id ?? item.id);
+    if (dom.externalId) dom.externalId.value = externalId;
+    if (dom.jobSearch) {
+      const label = item.ba_title_label ?? "";
+      const bkz = item.ba_bkz ?? "";
+      dom.jobSearch.value = label && bkz ? `${label} (${bkz})` : label || bkz || "";
+    }
+    updateFilenamePreview({ preferValue: item.supplier_id });
+  }
+
+  function setFormMode(mode) {
+    if (!dom.form) return;
+    if (mode === "edit") {
+      dom.form.dataset.mode = "edit";
+      state.editingId = normalizeId(dom.cmsItemId?.value);
+      dom.save?.classList.add("is-hidden");
+      dom.update?.classList.remove("is-hidden");
+      dom.cancelEdit?.classList.remove("is-hidden");
+    } else {
+      delete dom.form.dataset.mode;
+      state.editingId = "";
+      dom.save?.classList.remove("is-hidden");
+      dom.update?.classList.add("is-hidden");
+      dom.cancelEdit?.classList.add("is-hidden");
+    }
+  }
+
+  function enterEditMode(item) {
+    if (!item || !dom.form) return;
+    fillFormFromItem(item);
+    setFormMode("edit");
+    const focusTarget = dom.form.elements.namedItem("job_title");
+    if (focusTarget instanceof HTMLElement) {
+      requestAnimationFrame(() => focusTarget.focus());
+    }
+    if (typeof dom.form.scrollIntoView === "function") {
+      dom.form.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    setNotice(`Bearbeite "${item.job_title ?? "Eintrag"}". Änderungen mit "Aktualisieren" speichern.`, "warn");
+  }
+
+  function resetFormValues() {
+    if (!dom.form) return;
+    dom.form.reset();
+    if (dom.jobSearch) dom.jobSearch.value = "";
+    if (dom.cmsItemId) dom.cmsItemId.value = "";
+    if (dom.externalId) dom.externalId.value = "";
+    if (dom.transferFlag) dom.transferFlag.checked = false;
+  }
+
+  function exitEditMode({ resetForm = false } = {}) {
+    setFormMode("create");
+    if (resetForm) {
+      resetFormValues();
+      updateFilenamePreview();
+    }
   }
 
   function normalizeId(value) {
@@ -99,6 +206,78 @@
     return Boolean(value);
   }
 
+  function coalesceText(...values) {
+    for (const value of values) {
+      if (value == null) continue;
+      const text = String(value).trim();
+      if (text) return text;
+    }
+    return "";
+  }
+
+  function coalesceDate(...values) {
+    for (const value of values) {
+      if (!value) continue;
+      const date = value instanceof Date ? value : new Date(value);
+      if (!Number.isNaN(date.getTime())) return date;
+    }
+    return null;
+  }
+
+  function formatDateTime(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return "-";
+    return (
+      date.toLocaleDateString("de-DE") +
+      " " +
+      date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+    );
+  }
+
+  function normalizeBaStatus(value) {
+    const trimmed = normalizeWhitespace(value);
+    if (!trimmed) return BA_STATUS_DRAFT;
+    const key = normalizeComparable(trimmed);
+    if (["pending", "neu", "new", "waiting", "wartend", "draft"].includes(key)) {
+      return BA_STATUS_DRAFT;
+    }
+    if (["ok", "success", "done", "sent"].includes(key)) return "OK";
+    if (["error", "failed", "fail"].includes(key)) return "ERROR";
+    return trimmed;
+  }
+
+  function statusKey(value) {
+    return normalizeComparable(normalizeBaStatus(value));
+  }
+
+  function isStatusOk(value) {
+    return statusKey(value) === "ok";
+  }
+
+  function isStatusError(value) {
+    return statusKey(value) === "error";
+  }
+
+  function normalizeCmsItem(item = {}) {
+    const normalized = { ...item };
+    const id = normalizeId(item.id ?? item.cms_item_id ?? item._id);
+    if (id) normalized.id = id;
+    else delete normalized.id;
+    const title = coalesceText(item.job_title, item.Name, item.name, item.title);
+    normalized.job_title = title;
+    const city = coalesceText(item.location_city, item.city, item.location_city_name, item.location);
+    if (city) normalized.location_city = city;
+    const postcode = coalesceText(item.location_postcode, item.postcode, item.zip, item.plz);
+    if (postcode) normalized.location_postcode = postcode;
+    normalized.transfer_flag = normalizeTransferFlag(item.transfer_flag);
+    normalized.ba_status = normalizeBaStatus(item.ba_status);
+    const validFrom = coalesceText(item.valid_from, item.validFrom);
+    if (validFrom) normalized.valid_from = validFrom;
+    const validTo = coalesceText(item.valid_to, item.validTo);
+    if (validTo) normalized.valid_to = validTo;
+    return normalized;
+  }
+
   function formatTimestampForBA(date = new Date()) {
     const pad = value => String(value).padStart(2, "0");
     return [
@@ -124,18 +303,47 @@
       .replace(/'/g, "&apos;");
   }
 
+  const NOTICE_TIMEOUT_DEFAULT = 6000;
+  const NOTICE_TIMEOUT_ERROR = 9000;
+  let noticeHideTimer = null;
+
   function setNotice(text, type = "info") {
     if (!dom.notice) return;
-    const message = typeof text === "string" ? text : text != null ? JSON.stringify(text, null, 2) : "";
-    dom.notice.textContent = message;
-    dom.notice.classList.remove("ba-notice--ok", "ba-notice--warn", "ba-notice--error");
-    if (type === "ok") dom.notice.classList.add("ba-notice--ok");
-    if (type === "warn") dom.notice.classList.add("ba-notice--warn");
-    if (type === "error") dom.notice.classList.add("ba-notice--error");
+    const message =
+      typeof text === "string"
+        ? text
+        : text != null
+        ? JSON.stringify(text, null, 2)
+        : "";
+
+    dom.notice.textContent = message || "\u00a0";
+    dom.notice.className = "ba-toast";
+    if (type === "ok") dom.notice.classList.add("ba-toast--ok");
+    if (type === "warn") dom.notice.classList.add("ba-toast--warn");
+    if (type === "error") dom.notice.classList.add("ba-toast--error");
+
+    const role = type === "error" ? "alert" : "status";
+    if (dom.notice.getAttribute("role") !== role) {
+      dom.notice.setAttribute("role", role);
+    }
+
+    dom.notice.classList.remove("is-visible");
+    dom.notice.removeAttribute("aria-hidden");
+
+    requestAnimationFrame(() => {
+      dom.notice.classList.add("is-visible");
+    });
+
+    clearTimeout(noticeHideTimer);
+    const timeout = type === "error" ? NOTICE_TIMEOUT_ERROR : NOTICE_TIMEOUT_DEFAULT;
+    noticeHideTimer = window.setTimeout(() => {
+      dom.notice.classList.remove("is-visible");
+      dom.notice.setAttribute("aria-hidden", "true");
+    }, timeout);
   }
 
   function toggleDisabled(disabled) {
-    ["save", "upload-now", "batch-10", "batch-20", "btn-upload-selected", "btn-delete-selected"].forEach(id => {
+    ["save", "update", "upload-now", "batch-10", "batch-20", "btn-upload-selected", "btn-delete-selected"].forEach(id => {
       const element = document.getElementById(id);
       if (element) element.disabled = disabled;
     });
@@ -220,17 +428,21 @@
 
   function registerCmsItem(item) {
     if (!item) return;
-    const id = normalizeId(item.id);
-    if (id) state.cmsIdIndex.set(id, item);
-    const key = buildCmsKey(item);
-    if (key) state.cmsKeyIndex.set(key, item);
+    const normalized = normalizeCmsItem(item);
+    const id = normalizeId(normalized.id);
+    if (id) state.cmsIdIndex.set(id, normalized);
+    const key = buildCmsKey(normalized);
+    if (key) state.cmsKeyIndex.set(key, normalized);
   }
 
-  function findCmsItemMatchByName(data) {
+  function findCmsItemMatchByName(data, { excludeId } = {}) {
     if (!state.cmsItems.length || !data) return null;
     const key = buildCmsKey(data);
     if (!key) return null;
-    return state.cmsKeyIndex.get(key) ?? null;
+    const match = state.cmsKeyIndex.get(key) ?? null;
+    if (!match) return null;
+    if (excludeId && normalizeId(match.id) === normalizeId(excludeId)) return null;
+    return match;
   }
 
   function requireEitherEmailOrUrl(data) {
@@ -250,6 +462,12 @@
     });
     data.transfer_flag = dom.transferFlag?.checked ?? false;
     if (data.working_hours) data.working_hours = Number(data.working_hours);
+    const cmsId = normalizeId(data.cms_item_id);
+    if (cmsId) data.cms_item_id = cmsId;
+    else delete data.cms_item_id;
+    const externalId = normalizeId(data.external_id);
+    if (externalId) data.external_id = externalId;
+    else delete data.external_id;
     return data;
   }
 
@@ -278,11 +496,13 @@
 
   function applyExistingExternalId(data) {
     const fromForm = normalizeId(dom.externalId?.value);
-    const existing = normalizeId(data.external_id || data.id || fromForm);
+    const fromCms = normalizeId(dom.cmsItemId?.value);
+    const existing = normalizeId(data.external_id || data.id || fromForm || fromCms);
     if (existing) {
       data.external_id = existing;
       data.id = existing;
       if (dom.externalId) dom.externalId.value = existing;
+      if (dom.cmsItemId) dom.cmsItemId.value = existing;
     }
   }
 
@@ -311,6 +531,10 @@
   }
 
   function ensurePartnerIdMatchesSelection() {
+    if (state.editingId) {
+      updateFilenamePreview();
+      return;
+    }
     const jobs = getSelectedJobs();
     if (!jobs.length) {
       updateFilenamePreview();
@@ -410,36 +634,64 @@
   function renderCmsTable(items) {
     if (!dom.cmsBody) return;
     if (!items.length) {
-      dom.cmsBody.innerHTML = "<tr><td colspan='7'>Keine Einträge gefunden.</td></tr>";
+      dom.cmsBody.innerHTML = "<tr><td colspan='8'>Keine Einträge gefunden.</td></tr>";
       syncSelectionUI();
       return;
     }
     const selection = state.selection;
     dom.cmsBody.innerHTML = items
       .map(item => {
-        const id = normalizeId(item.id);
+        const normalized = normalizeCmsItem(item);
+        const id = normalizeId(normalized.id);
         const checked = selection.has(id) ? "checked" : "";
-        const disabled = item.ba_status === "OK" ? "disabled" : "";
-        const statusClass =
-          item.ba_status === "OK"
-            ? "ba-chip--ok"
-            : item.ba_status === "ERROR"
-            ? "ba-chip--error"
-            : "ba-chip--wait";
-        const updated = item.updated_on
-          ? new Date(item.updated_on).toLocaleDateString("de-DE") +
-            " " +
-            new Date(item.updated_on).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
-          : "-";
+        const sent = isStatusOk(normalized.ba_status);
+        const checkboxDisabled = !id || sent ? "disabled" : "";
+        const uploadDisabled = !id || sent ? "disabled" : "";
+        const actionDisabled = id ? "" : "disabled";
+        const statusLabel = normalizeBaStatus(normalized.ba_status);
+        const statusClass = sent ? "ba-chip--ok" : isStatusError(normalized.ba_status) ? "ba-chip--error" : "ba-chip--wait";
+        const updatedDate = coalesceDate(
+          normalized.last_updated,
+          normalized.updated_on,
+          normalized.updatedAt,
+          normalized.updated_at,
+          normalized.last_published,
+          normalized.created_on,
+          normalized.createdAt
+        );
+        const updated = updatedDate ? formatDateTime(updatedDate) : "-";
+        const idMarkup = id ? `<code>${escapeXML(id)}</code>` : "-";
+        const title = normalizeWhitespace(normalized.job_title) || "-";
+        const postcode = coalesceText(
+          normalized.location_postcode,
+          normalized.postcode,
+          normalized.zip,
+          normalized.plz
+        );
+        const city = coalesceText(
+          normalized.location_city,
+          normalized.city,
+          normalized.location_city_name,
+          normalized.location
+        );
+        const location = [postcode, city].filter(Boolean).join(" ") || "-";
+        const transferLabel = normalized.transfer_flag ? "Ja" : "Nein";
         return (
           `<tr>` +
-          `<td><input type=\"checkbox\" class=\"row-check\" data-id=\"${escapeXML(id)}\" ${checked} ${disabled}></td>` +
-          `<td>${escapeXML(item.job_title ?? "-")}</td>` +
-          `<td>${escapeXML(item.location_city ?? "-")}</td>` +
-          `<td><small>${escapeXML(updated)}</small></td>` +
-          `<td>${item.transfer_flag ? "<span class='ba-chip'>true</span>" : "<span class='ba-chip'>false</span>"}</td>` +
-          `<td><span class=\"ba-chip ${statusClass}\">${escapeXML(item.ba_status ?? "-")}</span></td>` +
-          `<td><button type=\"button\" class=\"ba-btn ba-btn--ghost js-upload-single\" data-id=\"${escapeXML(id)}\" ${disabled}>Upload</button></td>` +
+          `<td><input type=\"checkbox\" class=\"row-check\" data-id=\"${escapeXML(id)}\" ${checked} ${checkboxDisabled}></td>` +
+          `<td class=\"ba-table__id\">${idMarkup}</td>` +
+          `<td>${escapeXML(title)}</td>` +
+          `<td>${escapeXML(location)}</td>` +
+          `<td class=\"ba-table__when\">${escapeXML(updated)}</td>` +
+          `<td><span class='ba-chip'>${escapeXML(transferLabel)}</span></td>` +
+          `<td><span class=\"ba-chip ${statusClass}\">${escapeXML(statusLabel)}</span></td>` +
+          `<td class=\"ba-table__actions\">` +
+          `<div class=\"ba-table__action-group\">` +
+          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-edit-item\" data-id=\"${escapeXML(id)}\" ${actionDisabled}>Bearbeiten</button>` +
+          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-delete-item\" data-id=\"${escapeXML(id)}\" ${actionDisabled}>Löschen</button>` +
+          `<button type=\"button\" class=\"ba-btn ba-btn--ghost js-upload-single\" data-id=\"${escapeXML(id)}\" ${uploadDisabled}>Upload</button>` +
+          `</div>` +
+          `</td>` +
           `</tr>`
         );
       })
@@ -498,7 +750,7 @@
     let selectable = 0;
     let checked = 0;
     items.forEach(item => {
-      if (item.ba_status === "OK") return;
+      if (isStatusOk(item.ba_status)) return;
       selectable += 1;
       if (state.selection.has(normalizeId(item.id))) checked += 1;
     });
@@ -531,13 +783,19 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json();
         if (!payload || !Array.isArray(payload.items)) throw new Error("Ungültige Antwort vom Server");
-        state.cmsItems = payload.items.map(item => ({
-          ...item,
-          transfer_flag: normalizeTransferFlag(item?.transfer_flag)
-        }));
+        state.cmsItems = payload.items.map(item => normalizeCmsItem(item));
         rebuildCmsIndexes();
+        if (state.editingId && !state.cmsIdIndex.has(state.editingId)) {
+          exitEditMode({ resetForm: true });
+        }
         const validIds = new Set(state.cmsItems.map(item => normalizeId(item.id)));
-        state.selection = new Set(Array.from(state.selection).filter(id => validIds.has(id)));
+        state.selection = new Set(
+          Array.from(state.selection).filter(id => {
+            if (!validIds.has(id)) return false;
+            const entry = state.cmsIdIndex.get(id);
+            return entry ? !isStatusOk(entry.ba_status) : true;
+          })
+        );
         applyCmsFilters();
         if (!silent && !preserveNotice) setNotice(`Es wurden ${state.cmsItems.length} Einträge geladen.`, "ok");
       } catch (error) {
@@ -678,9 +936,12 @@
     dom.form.addEventListener("submit", async event => {
       event.preventDefault();
       if (state.isSaving) return;
+      const submitterId = event.submitter?.id ?? "";
+      const isUpdate = submitterId === "update" || dom.form.dataset.mode === "edit";
       await ensureCmsListLoaded();
       const data = serializeForm(dom.form);
-      const duplicate = findCmsItemMatchByName(data);
+      const currentId = normalizeId(data.cms_item_id || state.editingId);
+      const duplicate = findCmsItemMatchByName(data, { excludeId: isUpdate ? currentId : "" });
       if (duplicate) {
         setNotice(
           `Ein Job mit dem Titel "${data.job_title}" in "${data.location_city}" existiert bereits. Bitte Titel oder Ort anpassen.`,
@@ -693,30 +954,67 @@
         setNotice(validation.msg, "warn");
         return;
       }
-      setNotice("Speichern …");
+      let previousStatus = "";
+      if (currentId) {
+        const existing = state.cmsIdIndex.get(currentId);
+        previousStatus = existing?.ba_status ?? "";
+      }
+      if (isUpdate) {
+        if (!currentId) {
+          setNotice("Kein CMS-Item zum Aktualisieren ausgewählt.", "warn");
+          return;
+        }
+        data.id = currentId;
+        applyExistingExternalId(data);
+        data.ba_status = normalizeBaStatus(data.ba_status || previousStatus);
+      } else {
+        delete data.cms_item_id;
+        data.ba_status = normalizeBaStatus(data.ba_status || previousStatus);
+      }
+      const hook = isUpdate ? WEBHOOKS.update : WEBHOOKS.save;
+      if (!hook) {
+        setNotice("Kein passender Hook konfiguriert.", "error");
+        return;
+      }
+      setNotice(isUpdate ? "Aktualisiere …" : "Speichern …");
       toggleDisabled(true);
       try {
         state.isSaving = true;
-        const response = await postHook(WEBHOOKS.save, { item: data });
-        setNotice(response ?? "Gespeichert", "ok");
-        const newId = extractItemId(response);
-        if (newId) {
-          if (dom.externalId) dom.externalId.value = newId;
-          data.external_id = newId;
-          data.id = newId;
+        const response = await postHook(hook, { item: data });
+        const successPayload = response ?? (isUpdate ? "Aktualisiert" : "Gespeichert");
+        setNotice(successPayload, "ok");
+        let resultingId = extractItemId(response);
+        if (!resultingId && isUpdate) resultingId = currentId;
+        if (resultingId) {
+          if (dom.externalId) dom.externalId.value = resultingId;
+          if (dom.cmsItemId) dom.cmsItemId.value = resultingId;
+          data.external_id = resultingId;
+          data.id = resultingId;
         }
         await loadList({ silent: true, preserveNotice: true });
-        if (newId) {
-          const refreshed = state.cmsIdIndex.get(newId) ?? data;
+        if (!isUpdate && resultingId) {
+          const refreshed = state.cmsIdIndex.get(resultingId) ?? data;
           registerCmsItem(refreshed);
         }
+        if (isUpdate) {
+          exitEditMode({ resetForm: true });
+        }
       } catch (error) {
-        setNotice(error?.message ? `Fehler beim Speichern (${error.message}).` : "Fehler beim Speichern.", "error");
+        const action = isUpdate ? "Aktualisieren" : "Speichern";
+        setNotice(error?.message ? `Fehler beim ${action} (${error.message}).` : `Fehler beim ${action}.`, "error");
       } finally {
         state.isSaving = false;
         toggleDisabled(false);
         updateFilenamePreview();
       }
+    });
+
+    dom.cancelEdit?.addEventListener("click", () => {
+      if (!state.editingId) return;
+      const confirmCancel = window.confirm("Bearbeitung verwerfen und neues CMS-Item anlegen?");
+      if (!confirmCancel) return;
+      exitEditMode({ resetForm: true });
+      setNotice("Bearbeitungsmodus verlassen.");
     });
 
     dom.uploadNow?.addEventListener("click", async () => {
@@ -749,6 +1047,8 @@
     dom.batch20?.addEventListener("click", () => batchUpload(20));
 
     dom.supplierId?.addEventListener("input", () => updateFilenamePreview());
+    setFormMode("create");
+    if (dom.cmsItemId) dom.cmsItemId.value = "";
     updateFilenamePreview();
   }
 
@@ -768,13 +1068,39 @@
     });
 
     dom.cmsBody?.addEventListener("click", async event => {
+      const editButton = event.target.closest(".js-edit-item");
+      if (editButton) {
+        const id = normalizeId(editButton.dataset.id);
+        if (!id) return;
+        const job = state.cmsItems.find(item => normalizeId(item.id) === id);
+        if (job) enterEditMode(job);
+        return;
+      }
+
+      const deleteButton = event.target.closest(".js-delete-item");
+      if (deleteButton) {
+        const id = normalizeId(deleteButton.dataset.id);
+        if (!id) return;
+        const job = state.cmsItems.find(item => normalizeId(item.id) === id);
+        if (!job) return;
+        const confirmDelete = window.confirm(
+          `Soll die Stelle "${job.job_title ?? id}" wirklich im BA-CMS gelöscht werden?`
+        );
+        if (!confirmDelete) return;
+        state.selection.delete(id);
+        if (state.editingId && state.editingId === id) exitEditMode({ resetForm: true });
+        await sendToMake("DELETE", [job]);
+        await loadList({ silent: true, preserveNotice: true });
+        return;
+      }
+
       const button = event.target.closest(".js-upload-single");
       if (!button) return;
       const id = normalizeId(button.dataset.id);
       if (!id) return;
       const job = state.cmsItems.find(item => normalizeId(item.id) === id);
       if (!job) return;
-      if (job.ba_status === "OK") {
+      if (isStatusOk(job.ba_status)) {
         setNotice("Bereits gesendet – übersprungen", "warn");
         return;
       }
@@ -782,7 +1108,7 @@
     });
 
     dom.uploadSelected?.addEventListener("click", async () => {
-      const jobs = getSelectedJobs(job => job.ba_status !== "OK");
+      const jobs = getSelectedJobs(job => !isStatusOk(job.ba_status));
       if (!jobs.length) {
         setNotice("Alle ausgewählten Stellen wurden bereits gesendet.", "warn");
         return;
@@ -809,7 +1135,7 @@
       const items = getRenderableList();
       if (event.target.checked) {
         items.forEach(item => {
-          if (item.ba_status !== "OK") state.selection.add(normalizeId(item.id));
+          if (!isStatusOk(item.ba_status)) state.selection.add(normalizeId(item.id));
         });
       } else {
         state.selection.clear();
