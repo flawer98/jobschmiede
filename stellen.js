@@ -346,6 +346,8 @@
     const message =
       typeof text === "string"
         ? text
+        : text && typeof text === "object" && "message" in text
+        ? text.message
         : text != null
         ? JSON.stringify(text, null, 2)
         : "";
