@@ -5,7 +5,7 @@
   /* ========= Konfiguration ========= */
   const WEBHOOKS = {
     save: "https://hook.eu2.make.com/krje3ftzgbomitzs8ca8a5f5mc5c5bhf",
-    update: "https://hook.eu2.make.com/xt227w6rcr9ef4psrka4c3ocrqypbnji",
+    update: "https://hook.eu2.make.com/update-cms-item",
     uploadSingle: "https://hook.integromat.com/yyyyy",
     uploadBatch: "https://hook.integromat.com/zzzzz",
     list: "https://hook.eu2.make.com/1thp5v89ydmjmr6oaz9zfea0h5alnpky",
@@ -94,6 +94,26 @@
     "supplier_id"
   ];
 
+  function formatDateForInput(value) {
+    if (!value) return "";
+    if (value instanceof Date) {
+      if (Number.isNaN(value.getTime())) return "";
+      return value.toISOString().slice(0, 10);
+    }
+    const text = String(value).trim();
+    if (!text) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+    if (text.includes("T")) {
+      const [datePart] = text.split("T");
+      if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart;
+    }
+    const parsed = new Date(text);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+    return text;
+  }
+
   function fillFormFromItem(item = {}) {
     if (!dom.form) return;
     FORM_FIELD_NAMES.forEach(name => {
@@ -105,6 +125,8 @@
           field.checked = normalizeTransferFlag(value);
         } else if (field.type === "number") {
           field.value = value ?? "";
+        } else if (field.type === "date") {
+          field.value = formatDateForInput(value);
         } else {
           field.value = value ?? "";
         }
@@ -265,11 +287,13 @@
     else delete normalized.id;
     const title = coalesceText(item.job_title, item.Name, item.name, item.title);
     normalized.job_title = title;
-    const city = coalesceText(item.location_city, item.city, item.location_city_name, item.location);
+    const city = coalesceText(item.location_city, item.city, item.location_city_name);
     if (city) normalized.location_city = city;
     const postcode = coalesceText(item.location_postcode, item.postcode, item.zip, item.plz);
     if (postcode) normalized.location_postcode = postcode;
     normalized.transfer_flag = normalizeTransferFlag(item.transfer_flag);
+    const rawStatus = normalizeWhitespace(item.ba_status);
+    if (rawStatus) normalized.ba_status_raw = rawStatus;
     normalized.ba_status = normalizeBaStatus(item.ba_status);
     const validFrom = coalesceText(item.valid_from, item.validFrom);
     if (validFrom) normalized.valid_from = validFrom;
@@ -494,15 +518,24 @@
     return { ok: true };
   }
 
-  function applyExistingExternalId(data) {
-    const fromForm = normalizeId(dom.externalId?.value);
-    const fromCms = normalizeId(dom.cmsItemId?.value);
-    const existing = normalizeId(data.external_id || data.id || fromForm || fromCms);
-    if (existing) {
-      data.external_id = existing;
-      data.id = existing;
-      if (dom.externalId) dom.externalId.value = existing;
-      if (dom.cmsItemId) dom.cmsItemId.value = existing;
+  function applyExistingIds(data) {
+    const externalFromForm = normalizeId(dom.externalId?.value);
+    const cmsFromForm = normalizeId(dom.cmsItemId?.value);
+    const external = normalizeId(data.external_id || externalFromForm);
+    const cmsId = normalizeId(data.cms_item_id || data.id || cmsFromForm);
+    if (external) {
+      data.external_id = external;
+      if (dom.externalId) dom.externalId.value = external;
+    } else {
+      delete data.external_id;
+    }
+    if (cmsId) {
+      data.id = cmsId;
+      if (dom.cmsItemId) dom.cmsItemId.value = cmsId;
+    } else if (external) {
+      data.id = external;
+    } else {
+      delete data.id;
     }
   }
 
@@ -644,12 +677,17 @@
         const normalized = normalizeCmsItem(item);
         const id = normalizeId(normalized.id);
         const checked = selection.has(id) ? "checked" : "";
-        const sent = isStatusOk(normalized.ba_status);
+        const statusForChip = normalizeBaStatus(normalized.ba_status_raw ?? normalized.ba_status);
+        const sent = isStatusOk(statusForChip);
         const checkboxDisabled = !id || sent ? "disabled" : "";
         const uploadDisabled = !id || sent ? "disabled" : "";
         const actionDisabled = id ? "" : "disabled";
-        const statusLabel = normalizeBaStatus(normalized.ba_status);
-        const statusClass = sent ? "ba-chip--ok" : isStatusError(normalized.ba_status) ? "ba-chip--error" : "ba-chip--wait";
+        const statusLabel = coalesceText(normalized.ba_status_raw, statusForChip) || "-";
+        const statusClass = sent
+          ? "ba-chip--ok"
+          : isStatusError(statusForChip)
+          ? "ba-chip--error"
+          : "ba-chip--wait";
         const updatedDate = coalesceDate(
           normalized.last_updated,
           normalized.updated_on,
@@ -671,8 +709,7 @@
         const city = coalesceText(
           normalized.location_city,
           normalized.city,
-          normalized.location_city_name,
-          normalized.location
+          normalized.location_city_name
         );
         const location = [postcode, city].filter(Boolean).join(" ") || "-";
         const transferLabel = normalized.transfer_flag ? "Ja" : "Nein";
@@ -941,13 +978,15 @@
       await ensureCmsListLoaded();
       const data = serializeForm(dom.form);
       const currentId = normalizeId(data.cms_item_id || state.editingId);
-      const duplicate = findCmsItemMatchByName(data, { excludeId: isUpdate ? currentId : "" });
-      if (duplicate) {
-        setNotice(
-          `Ein Job mit dem Titel "${data.job_title}" in "${data.location_city}" existiert bereits. Bitte Titel oder Ort anpassen.`,
-          "error"
-        );
-        return;
+      if (!isUpdate) {
+        const duplicate = findCmsItemMatchByName(data);
+        if (duplicate) {
+          setNotice(
+            `Ein Job mit dem Titel "${data.job_title}" in "${data.location_city}" existiert bereits. Bitte Titel oder Ort anpassen.`,
+            "error"
+          );
+          return;
+        }
       }
       const validation = validate(data);
       if (!validation.ok) {
@@ -955,9 +994,11 @@
         return;
       }
       let previousStatus = "";
+      let previousStatusRaw = "";
       if (currentId) {
         const existing = state.cmsIdIndex.get(currentId);
         previousStatus = existing?.ba_status ?? "";
+        previousStatusRaw = existing?.ba_status_raw ?? "";
       }
       if (isUpdate) {
         if (!currentId) {
@@ -965,11 +1006,12 @@
           return;
         }
         data.id = currentId;
-        applyExistingExternalId(data);
-        data.ba_status = normalizeBaStatus(data.ba_status || previousStatus);
+        applyExistingIds(data);
+        const statusToPreserve = previousStatusRaw || previousStatus;
+        data.ba_status = statusToPreserve || BA_STATUS_DRAFT;
       } else {
         delete data.cms_item_id;
-        data.ba_status = normalizeBaStatus(data.ba_status || previousStatus);
+        data.ba_status = normalizeBaStatus(data.ba_status || previousStatus || BA_STATUS_DRAFT);
       }
       const hook = isUpdate ? WEBHOOKS.update : WEBHOOKS.save;
       if (!hook) {
@@ -986,10 +1028,14 @@
         let resultingId = extractItemId(response);
         if (!resultingId && isUpdate) resultingId = currentId;
         if (resultingId) {
-          if (dom.externalId) dom.externalId.value = resultingId;
-          if (dom.cmsItemId) dom.cmsItemId.value = resultingId;
-          data.external_id = resultingId;
-          data.id = resultingId;
+          if (isUpdate) {
+            if (dom.externalId && !dom.externalId.value) dom.externalId.value = resultingId;
+          } else {
+            if (dom.externalId) dom.externalId.value = resultingId;
+            if (dom.cmsItemId) dom.cmsItemId.value = resultingId;
+            data.external_id = resultingId;
+            data.id = resultingId;
+          }
         }
         await loadList({ silent: true, preserveNotice: true });
         if (!isUpdate && resultingId) {
@@ -1020,7 +1066,7 @@
     dom.uploadNow?.addEventListener("click", async () => {
       await ensureCmsListLoaded();
       const data = serializeForm(dom.form);
-      applyExistingExternalId(data);
+      applyExistingIds(data);
       const validation = validate(data);
       if (!validation.ok) {
         setNotice(validation.msg, "warn");
