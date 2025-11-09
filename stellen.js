@@ -1123,7 +1123,8 @@
         return;
       }
 
-
+    });
+    
     dom.uploadSelected?.addEventListener("click", async () => {
       const jobs = getSelectedJobs(job => !isStatusOk(job.ba_status));
       if (!jobs.length) {
