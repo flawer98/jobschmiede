@@ -26,7 +26,6 @@
     supplierId: $("#supplier_id"),
     filenamePreview: $("#filename_preview"),
     cmsItemId: $("#cms_item_id"),
-    externalId: $("#external_id"),
     transferFlag: $("#transfer_flag"),
     save: $("#save"),
     update: $("#update"),
@@ -135,8 +134,6 @@
     if (dom.transferFlag) dom.transferFlag.checked = normalizeTransferFlag(item.transfer_flag);
     const cmsId = normalizeId(item.id);
     if (dom.cmsItemId) dom.cmsItemId.value = cmsId;
-    const externalId = normalizeId(item.external_id ?? item.id);
-    if (dom.externalId) dom.externalId.value = externalId;
     if (dom.jobSearch) {
       const label = item.ba_title_label ?? "";
       const bkz = item.ba_bkz ?? "";
@@ -181,7 +178,6 @@
     dom.form.reset();
     if (dom.jobSearch) dom.jobSearch.value = "";
     if (dom.cmsItemId) dom.cmsItemId.value = "";
-    if (dom.externalId) dom.externalId.value = "";
     if (dom.transferFlag) dom.transferFlag.checked = false;
   }
 
@@ -287,8 +283,23 @@
     else delete normalized.id;
     const title = coalesceText(item.job_title, item.Name, item.name, item.title);
     normalized.job_title = title;
-    const city = coalesceText(item.location_city, item.city, item.location_city_name);
-    if (city) normalized.location_city = city;
+    const employment = normalizeWhitespace(item.employment_type ?? item.employmentType ?? "");
+    const city = coalesceText(
+      item.location_city,
+      item.location_city_text,
+      item.location_city_label,
+      item.city,
+      item.location_city_name
+    );
+    delete normalized.location_city;
+    if (city) {
+      const cityClean = normalizeWhitespace(city);
+      if (!cityClean || (employment && normalizeComparable(cityClean) === normalizeComparable(employment))) {
+        delete normalized.location_city;
+      } else {
+        normalized.location_city = cityClean;
+      }
+    }
     const postcode = coalesceText(item.location_postcode, item.postcode, item.zip, item.plz);
     if (postcode) normalized.location_postcode = postcode;
     normalized.transfer_flag = normalizeTransferFlag(item.transfer_flag);
@@ -415,12 +426,12 @@
       try {
         return extractItemId(JSON.parse(response));
       } catch (error) {
-        const match = response.match(/(?:item[_-]?id|external[_-]?id|id)["']?[:=]\s*"?([\w-]{6,})"?/i);
+        const match = response.match(/(?:item[_-]?id|id)["']?[:=]\s*"?([\w-]{6,})"?/i);
         return match ? match[1] : "";
       }
     }
     if (typeof response !== "object") return "";
-    const candidate = response.itemId ?? response.item_id ?? response.external_id ?? response.id ?? null;
+    const candidate = response.itemId ?? response.item_id ?? response.id ?? null;
     if (candidate) return String(candidate);
     const containers = [response.items, response.item, response.data, response.raw];
     for (const container of containers) {
@@ -489,9 +500,6 @@
     const cmsId = normalizeId(data.cms_item_id);
     if (cmsId) data.cms_item_id = cmsId;
     else delete data.cms_item_id;
-    const externalId = normalizeId(data.external_id);
-    if (externalId) data.external_id = externalId;
-    else delete data.external_id;
     return data;
   }
 
@@ -519,23 +527,15 @@
   }
 
   function applyExistingIds(data) {
-    const externalFromForm = normalizeId(dom.externalId?.value);
     const cmsFromForm = normalizeId(dom.cmsItemId?.value);
-    const external = normalizeId(data.external_id || externalFromForm);
     const cmsId = normalizeId(data.cms_item_id || data.id || cmsFromForm);
-    if (external) {
-      data.external_id = external;
-      if (dom.externalId) dom.externalId.value = external;
-    } else {
-      delete data.external_id;
-    }
     if (cmsId) {
       data.id = cmsId;
+      data.cms_item_id = cmsId;
       if (dom.cmsItemId) dom.cmsItemId.value = cmsId;
-    } else if (external) {
-      data.id = external;
     } else {
       delete data.id;
+      delete data.cms_item_id;
     }
   }
 
@@ -706,11 +706,21 @@
           normalized.zip,
           normalized.plz
         );
-        const city = coalesceText(
-          normalized.location_city,
-          normalized.city,
-          normalized.location_city_name
+        const rawCity = normalizeWhitespace(
+          coalesceText(
+            normalized.location_city,
+            normalized.location_city_text,
+            normalized.location_city_label,
+            normalized.city,
+            normalized.location_city_name
+          )
         );
+        const employmentLabel = normalizeWhitespace(normalized.employment_type ?? "");
+        const city = rawCity && employmentLabel
+          ? normalizeComparable(rawCity) === normalizeComparable(employmentLabel)
+            ? ""
+            : rawCity
+          : rawCity;
         const location = [postcode, city].filter(Boolean).join(" ") || "-";
         const transferLabel = normalized.transfer_flag ? "Ja" : "Nein";
         return (
@@ -877,7 +887,6 @@
   function buildSingleJobXML(job, action) {
     const supplierId = normalizePartnerId(job?.supplier_id ?? job?.partner_id);
     const fields = {
-      ExternalId: normalizeId(job?.external_id ?? job?.id),
       Title: job?.job_title,
       EmploymentType: job?.employment_type,
       WorkingHours: job?.working_hours,
@@ -1028,14 +1037,9 @@
         let resultingId = extractItemId(response);
         if (!resultingId && isUpdate) resultingId = currentId;
         if (resultingId) {
-          if (isUpdate) {
-            if (dom.externalId && !dom.externalId.value) dom.externalId.value = resultingId;
-          } else {
-            if (dom.externalId) dom.externalId.value = resultingId;
-            if (dom.cmsItemId) dom.cmsItemId.value = resultingId;
-            data.external_id = resultingId;
-            data.id = resultingId;
-          }
+          if (dom.cmsItemId) dom.cmsItemId.value = resultingId;
+          data.id = resultingId;
+          data.cms_item_id = resultingId;
         }
         await loadList({ silent: true, preserveNotice: true });
         if (!isUpdate && resultingId) {
