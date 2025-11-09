@@ -5,7 +5,7 @@
   /* ========= Konfiguration ========= */
   const WEBHOOKS = {
     save: "https://hook.eu2.make.com/krje3ftzgbomitzs8ca8a5f5mc5c5bhf",
-    update: "https://hook.eu2.make.com/update-cms-item",
+    update: "https://hook.eu2.make.com/xt227w6rcr9ef4psrka4c3ocrqypbnji",
     uploadSingle: "https://hook.integromat.com/yyyyy",
     uploadBatch: "https://hook.integromat.com/zzzzz",
     list: "https://hook.eu2.make.com/1thp5v89ydmjmr6oaz9zfea0h5alnpky",
